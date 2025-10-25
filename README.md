@@ -24,4 +24,17 @@
 响应式适配
 页面会根据屏幕大小自动调整布局，在手机等小屏设备上也能正常查看，不过大屏模式在小屏设备上会自动隐藏。
 
+后端框架
+Python：推荐用 Django 或 FastAPI（轻量、高性能，适合 API 开发）
+Java：可选 Spring Boot（生态完善，适合企业级应用）
+Go：适合高并发场景，可选用 Gin 框架
+数据存储
+时序数据库：优先选 InfluxDB 或 TimescaleDB（专为时间序列数据设计，适合存储 CPU、内存等监控指标）
+关系型数据库：用 PostgreSQL 或 MySQL 存储主机、虚拟机等元数据
+缓存：可选 Redis 缓存高频访问数据（如实时状态）
+数据采集工具
+PyVmomi：VMware 官方的 Python SDK，用于对接 ESXI 主机和 vCenter
+Prometheus + vmware_exporter：开源监控方案，可直接采集 ESXI metrics
+SNMP：用于网络设备监控（如物理交换机）
+
 <img width="1920" height="1080" alt="屏幕截图 2025-10-25 155014" src="https://github.com/user-attachments/assets/b2992cd7-e6d9-4fb5-b542-4b8e728e02ea" />
