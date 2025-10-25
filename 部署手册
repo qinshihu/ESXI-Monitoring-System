@@ -1,0 +1,548 @@
+部署步骤
+
+一、基础环境准备
+
+更新系统并安装依赖
+bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y python3 python3-pip python3-venv git nginx
+安装 Docker 和 Docker Compose（推荐容器化部署）
+bash
+
+# 安装Docker
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+sudo usermod -aG docker $USER  # 添加当前用户到docker组
+
+# 安装Docker Compose
+sudo apt install -y docker-compose-plugin
+重启系统使配置生效
+bash
+sudo reboot
+
+二、数据存储部署（使用 Docker）
+
+创建数据存储目录
+bash
+mkdir -p /opt/esxi-monitor/influxdb /opt/esxi-monitor/mysql /opt/esxi-monitor/redis
+创建 docker-compose.yml 文件
+bash
+vim /opt/esxi-monitor/docker-compose.yml
+配置内容如下
+yaml
+version: '3.8'
+
+services:
+  influxdb:
+    image: influxdb:2.7
+    container_name: esxi-influxdb
+    restart: always
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=esxiadmin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=StrongPassword123!
+      - DOCKER_INFLUXDB_INIT_ORG=esxi-org
+      - DOCKER_INFLUXDB_INIT_BUCKET=esxi-monitor
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=esxi-monitor-token-123456
+    volumes:
+      - /opt/esxi-monitor/influxdb:/var/lib/influxdb2
+
+  mysql:
+    image: mysql:8.0
+    container_name: esxi-mysql
+    restart: always
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=RootPassword123!
+      - MYSQL_DATABASE=esxi_monitor
+      - MYSQL_USER=esxiuser
+      - MYSQL_PASSWORD=UserPassword123!
+    volumes:
+      - /opt/esxi-monitor/mysql:/var/lib/mysql
+
+  redis:
+    image: redis:7.0
+    container_name: esxi-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - /opt/esxi-monitor/redis:/data
+
+启动数据存储服务
+bash
+cd /opt/esxi-monitor
+docker compose up -d
+验证服务状态
+bash
+docker compose ps
+确保所有服务状态为 "Up"
+
+三、后端服务部署
+
+创建项目目录
+bash
+mkdir -p /opt/esxi-monitor/backend
+cd /opt/esxi-monitor/backend
+
+创建 Python 虚拟环境
+bash
+python3 -m venv venv
+source venv/bin/activate
+
+创建依赖文件 requirements.txt
+bash
+cat > requirements.txt << EOF
+fastapi==0.103.1
+uvicorn==0.23.2
+pyvmomi==7.0.3
+influxdb-client==1.36.1
+sqlalchemy==2.0.21
+pymysql==1.1.0
+redis==4.6.0
+apscheduler==3.10.1
+python-dotenv==1.0.0
+pydantic==2.4.2
+EOF
+
+安装依赖
+bash
+pip install -r requirements.txt
+
+创建配置文件.env
+bash
+cat > .env << EOF
+
+# 数据库配置
+INFLUXDB_URL=http://localhost:8086
+INFLUXDB_TOKEN=esxi-monitor-token-123456
+INFLUXDB_ORG=esxi-org
+INFLUXDB_BUCKET=esxi-monitor
+
+MYSQL_URL=mysql+pymysql://esxiuser:UserPassword123!@localhost:3306/esxi_monitor
+
+REDIS_URL=redis://localhost:6379/0
+
+# ESXI配置
+ESXI_HOSTS=esxi-01.example.com,esxi-02.example.com
+ESXI_USER=root
+ESXI_PASSWORD=YourESXIPassword
+
+# 采集配置
+COLLECT_INTERVAL=30  # 采集间隔（秒）
+
+# API配置
+API_PORT=8000
+EOF
+
+创建数据库初始化脚本 init_db.py
+python
+运行
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Enum
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+import os
+from datetime import datetime
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
+mysql_url = os.getenv("MYSQL_URL")
+
+# 初始化数据库连接
+engine = create_engine(mysql_url)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# 定义ESXI主机表
+class ESXIHost(Base):
+    __tablename__ = "esxi_hosts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), unique=True, index=True, nullable=False)
+    ip = Column(String(20), nullable=False)
+    version = Column(String(20))
+    status = Column(Enum('running', 'warning', 'error'), default='running')
+    last_check_time = Column(DateTime)
+
+# 定义虚拟机表
+class VirtualMachine(Base):
+    __tablename__ = "virtual_machines"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), index=True, nullable=False)
+    host_id = Column(Integer)
+    status = Column(Enum('running', 'stopped', 'warning'), default='stopped')
+    ip = Column(String(20))
+    power_state = Column(String(20))
+    last_check_time = Column(DateTime)
+
+# 定义告警表
+class Alert(Base):
+    __tablename__ = "alerts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(100), nullable=False)
+    message = Column(String(500))
+    host = Column(String(50))
+    vm = Column(String(50))
+    level = Column(Enum('info', 'warning', 'error'), default='info')
+    status = Column(Enum('new', 'processing', 'resolved'), default='new')
+    create_time = Column(DateTime, default=datetime.now)
+    resolve_time = Column(DateTime)
+
+# 创建表
+Base.metadata.create_all(bind=engine)
+print("数据库表创建成功")
+执行数据库初始化
+bash
+python init_db.py
+创建主程序 main.py
+python
+运行
+import os
+import ssl
+from datetime import datetime
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from pyVim.connect import SmartConnectNoSSL, Disconnect
+from pyVmomi import vim
+from influxdb_client import InfluxDBClient, Point
+from influxdb_client.client.write_api import SYNCHRONOUS
+import redis
+from apscheduler.schedulers.background import BackgroundScheduler
+from dotenv import load_dotenv
+import uvicorn
+
+# 加载环境变量
+load_dotenv()
+
+# 初始化FastAPI
+app = FastAPI(title="ESXI监控系统API")
+
+# 允许跨域
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 初始化数据库连接
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+mysql_url = os.getenv("MYSQL_URL")
+engine = create_engine(mysql_url)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# 初始化InfluxDB连接
+influxdb_client = InfluxDBClient(
+    url=os.getenv("INFLUXDB_URL"),
+    token=os.getenv("INFLUXDB_TOKEN"),
+    org=os.getenv("INFLUXDB_ORG")
+)
+write_api = influxdb_client.write_api(write_options=SYNCHRONOUS)
+query_api = influxdb_client.query_api()
+bucket = os.getenv("INFLUXDB_BUCKET")
+
+# 初始化Redis
+redis_client = redis.from_url(os.getenv("REDIS_URL"))
+
+# 数据库依赖
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# ESXI连接函数
+def connect_esxi(host):
+    try:
+        context = ssl._create_unverified_context()
+        conn = SmartConnectNoSSL(
+            host=host,
+            user=os.getenv("ESXI_USER"),
+            pwd=os.getenv("ESXI_PASSWORD"),
+            sslContext=context
+        )
+        return conn
+    except Exception as e:
+        print(f"连接ESXI {host} 失败: {str(e)}")
+        return None
+
+# 数据采集函数 - 主机信息
+def collect_host_data(host):
+    conn = connect_esxi(host)
+    if not conn:
+        return None
+    
+    try:
+        content = conn.RetrieveContent()
+        host_view = content.viewManager.CreateContainerView(
+            content.rootFolder, [vim.HostSystem], True
+        )
+        host_system = host_view.view[0]
+        host_view.Destroy()
+        
+        # 提取主机信息
+        host_info = {
+            "name": host_system.name,
+            "ip": host,
+            "version": host_system.config.product.version,
+            "cpu_usage": get_host_cpu_usage(host_system),
+            "memory_usage": get_host_memory_usage(host_system),
+            "status": "running" if host_system.runtime.connectionState == "connected" else "error",
+            "last_check_time": datetime.now()
+        }
+        
+        # 写入时序数据库
+        write_host_metrics(host_info)
+        
+        return host_info
+    finally:
+        Disconnect(conn)
+
+# 获取CPU使用率
+def get_host_cpu_usage(host_system):
+    cpu_usage = host_system.summary.quickStats.overallCpuUsage
+    cpu_total = host_system.hardware.cpuInfo.hz * host_system.hardware.cpuInfo.numCpuCores
+    return (cpu_usage / (cpu_total / 1024)) * 100  # 转换为百分比
+
+# 获取内存使用率
+def get_host_memory_usage(host_system):
+    mem_usage = host_system.summary.quickStats.overallMemoryUsage
+    mem_total = host_system.hardware.memorySize / 1024 / 1024  # 转换为MB
+    return (mem_usage / mem_total) * 100  # 转换为百分比
+
+# 写入主机指标到InfluxDB
+def write_host_metrics(host_info):
+    # 写入CPU使用率
+    point = Point("cpu_usage") \
+        .tag("host", host_info["name"]) \
+        .field("value", host_info["cpu_usage"]) \
+        .time(host_info["last_check_time"])
+    write_api.write(bucket=bucket, record=point)
+    
+    # 写入内存使用率
+    point = Point("memory_usage") \
+        .tag("host", host_info["name"]) \
+        .field("value", host_info["memory_usage"]) \
+        .time(host_info["last_check_time"])
+    write_api.write(bucket=bucket, record=point)
+
+# 定时采集任务
+def scheduled_collection():
+    hosts = os.getenv("ESXI_HOSTS").split(",")
+    for host in hosts:
+        print(f"开始采集 {host} 的数据...")
+        host_data = collect_host_data(host.strip())
+        if host_data:
+            print(f"成功采集 {host} 的数据")
+        else:
+            print(f"采集 {host} 的数据失败")
+
+# 启动定时任务
+scheduler = BackgroundScheduler()
+scheduler.add_job(
+    scheduled_collection,
+    'interval',
+    seconds=int(os.getenv("COLLECT_INTERVAL", 30))
+)
+scheduler.start()
+
+# API模型
+class HostStatus(BaseModel):
+    name: str
+    cpu_usage: float
+    memory_usage: float
+    status: str
+
+# API接口 - 获取主机状态
+@app.get("/api/hosts", response_model=list[HostStatus])
+async def get_hosts():
+    hosts = os.getenv("ESXI_HOSTS").split(",")
+    result = []
+    for host in hosts:
+        host = host.strip()
+        # 从Redis获取缓存数据
+        cached_data = redis_client.get(f"host:{host}")
+        if cached_data:
+            import json
+            result.append(json.loads(cached_data))
+        else:
+            # 直接采集最新数据
+            data = collect_host_data(host)
+            if data:
+                redis_client.setex(f"host:{host}", 60, json.dumps(data))
+                result.append({
+                    "name": data["name"],
+                    "cpu_usage": data["cpu_usage"],
+                    "memory_usage": data["memory_usage"],
+                    "status": data["status"]
+                })
+    return result
+
+# 启动服务
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("API_PORT", 8000)), reload=False)
+创建系统服务配置
+bash
+sudo vim /etc/systemd/system/esxi-monitor-backend.service
+服务配置内容
+ini
+[Unit]
+Description=ESXI Monitor Backend Service
+After=network.target docker.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/esxi-monitor/backend
+ExecStart=/opt/esxi-monitor/backend/venv/bin/python main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+启动后端服务
+bash
+sudo systemctl daemon-reload
+sudo systemctl enable esxi-monitor-backend
+sudo systemctl start esxi-monitor-backend
+检查服务状态
+bash
+sudo systemctl status esxi-monitor-backend
+四、前端部署
+创建前端目录
+bash
+sudo mkdir -p /var/www/esxi-monitor
+sudo chown $USER:$USER /var/www/esxi-monitor
+将前端代码复制到目录
+bash
+# 假设前端代码文件名为esxi-monitor.html
+cp /path/to/your/esxi-monitor.html /var/www/esxi-monitor/index.html
+修改前端代码中的 API 地址
+bash
+# 将前端代码中的API请求地址修改为实际后端地址
+sed -i 's|/api/|http://your-server-ip:8000/api/|g' /var/www/esxi-monitor/index.html
+配置 Nginx
+bash
+sudo vim /etc/nginx/sites-available/esxi-monitor
+Nginx 配置内容
+nginx
+server {
+    listen 80;
+    server_name your-server-ip;  # 替换为你的服务器IP或域名
+    
+    root /var/www/esxi-monitor;
+    index index.html;
+    
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+启用站点配置
+bash
+sudo ln -s /etc/nginx/sites-available/esxi-monitor /etc/nginx/sites-enabled/
+sudo nginx -t  # 测试配置是否正确
+sudo systemctl restart nginx
+
+
+五、系统验证
+访问 Web 界面打开浏览器，访问 http://your-server-ip，应该能看到 ESXI 监控系统界面
+检查 API 是否正常工作
+bash
+curl http://localhost:8000/api/hosts
+
+应该能看到返回的主机状态 JSON 数据
+
+验证数据采集
+
+登录 InfluxDB 管理界面：http://your-server-ip:8086
+使用.env 中配置的用户名和密码登录
+检查是否有数据写入
+
+
+六、告警配置（可选）
+创建告警脚本 send_alert.py
+python
+运行
+import requests
+import json
+
+def send_wechat_alert(alert):
+    """发送企业微信告警"""
+    # 替换为你的企业微信机器人Webhook
+    webhook = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your-key"
+    
+    data = {
+        "msgtype": "text",
+        "text": {
+            "content": f"【ESXI监控告警】\n级别: {alert['level']}\n标题: {alert['title']}\n内容: {alert['message']}\n时间: {alert['create_time']}"
+        }
+    }
+    
+    try:
+        response = requests.post(webhook, data=json.dumps(data))
+        return response.json()
+    except Exception as e:
+        print(f"发送告警失败: {str(e)}")
+        return None
+在 main.py 中集成告警功能（具体集成方法请参考前面的后端开发部分）
+
+
+七、维护与扩展
+
+日志查看
+bash
+# 后端日志
+sudo journalctl -u esxi-monitor-backend -f
+
+# 容器日志
+docker logs -f esxi-influxdb
+数据备份
+bash
+# 备份InfluxDB数据
+docker exec esxi-influxdb influx backup /tmp/backup
+docker cp esxi-influxdb:/tmp/backup /opt/backups/esxi-influxdb-$(date +%Y%m%d)
+
+# 备份MySQL数据
+docker exec esxi-mysql mysqldump -uesxiuser -pUserPassword123! esxi_monitor > /opt/backups/esxi-mysql-$(date +%Y%m%d).sql
+添加新的 ESXI 主机
+修改.env 文件中的 ESXI_HOSTS 配置
+重启后端服务：sudo systemctl restart esxi-monitor-backend
+
+
+
+常见问题排查
+
+无法连接 ESXI 主机
+
+检查网络连通性：ping esxi-host-ip
+检查 ESXI 主机 443 端口是否开放：telnet esxi-host-ip 443
+
+验证 ESXI 用户名和密码是否正确
+
+
+前端无法获取数据
+检查后端服务是否运行：sudo systemctl status esxi-monitor-backend
+检查 API 是否正常：curl http://localhost:8000/api/hosts
+检查浏览器控制台是否有跨域错误
+
+
+数据未写入 InfluxDB
+检查 InfluxDB 服务状态：docker compose ps
+检查后端日志中的错误信息
+验证 InfluxDB 配置是否正确
+
+
+通过以上步骤，您应该能够成功部署一个完整的 ESXI 监控系统。系统运行后，可以通过 Web 界面实时监控 ESXI 主机和虚拟机的状态，并在出现异常时及时收到告警通知。
