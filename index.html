@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>ESXI监控中心 - 企业级虚拟化监控系统</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+  
+  <script>
+    // 动态计算根字体大小，适配不同屏幕
+    function setRootFontSize() {
+      const baseWidth = 1920;
+      const baseFontSize = 10;
+      const currentWidth = window.innerWidth;
+      const fontSize = Math.min(Math.max((currentWidth / baseWidth) * baseFontSize, 8), 14);
+      document.documentElement.style.fontSize = `${fontSize}px`;
+    }
+    window.addEventListener('resize', setRootFontSize);
+    setRootFontSize();
+
+    // Tailwind配置
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#0EA5E9',
+            secondary: '#1E293B',
+            success: '#10B981',
+            warning: '#F59E0B',
+            danger: '#EF4444',
+            dark: '#0F172A',
+            'esxi-purple': '#5E21B6'
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+          },
+        },
+      }
+    }
+  </script>
+  
+  <style type="text/tailwindcss">
+    @layer utilities {
+      .content-auto {
+        content-visibility: auto;
+      }
+      .text-shadow {
+        text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      }
+      .border-glow {
+        box-shadow: 0 0 clamp(0.3rem, 0.8vw, 0.8rem) rgba(14, 165, 233, 0.5);
+      }
+      .dashboard-grid {
+        display: grid;
+        width: 100%;
+        height: 100%;
+        gap: clamp(0.5rem, 1vw, 1rem);
+        grid-template-columns: repeat(4, 1fr);
+        grid-template-rows: 18% 38% 40%;
+        grid-template-areas:
+          "header header header header"
+          "host-status host-status resources-alert performance-trends"
+          "vm-list vm-list storage-monitor network-monitor";
+      }
+
+      /* 大屏模式布局优化 */
+      .large-screen .dashboard-grid {
+        grid-template-columns: repeat(6, 1fr);
+        grid-template-rows: 15% 40% 42%;
+        grid-template-areas:
+          "header header header header header header"
+          "host-status host-status host-status resources-alert performance-trends performance-trends"
+          "vm-list vm-list storage-monitor storage-monitor network-monitor network-monitor";
+      }
+
+      /* 响应式调整 */
+      @media (max-width: 1600px) {
+        .dashboard-grid {
+          grid-template-columns: repeat(2, 1fr);
+          grid-template-rows: auto;
+          grid-template-areas:
+            "header header"
+            "host-status host-status"
+            "resources-alert performance-trends"
+            "vm-list vm-list"
+            "storage-monitor network-monitor";
+        }
+      }
+
+      @media (max-width: 1024px) {
+        .dashboard-grid {
+          grid-template-columns: 1fr;
+          grid-template-areas:
+            "header"
+            "host-status"
+            "resources-alert"
+            "performance-trends"
+            "vm-list"
+            "storage-monitor"
+            "network-monitor";
+        }
+        .large-screen-toggle {
+          display: none !important;
+        }
+      }
+    }
+  </style>
+</head>
+
+<body class="bg-dark text-gray-100 overflow-hidden h-screen w-screen transition-all duration-300" id="app-body">
+  <div class="container w-full h-full p-[clamp(0.5rem,1vw,1rem)] flex flex-col">
+    <!-- 主仪表盘区域 -->
+    <div class="flex-1 dashboard-grid">
+      <!-- 头部区域 -->
+      <div class="grid-area: header flex flex-col justify-between border border-gray-700 rounded-lg p-[clamp(0.5rem,1vw,1rem)] bg-secondary/50">
+        <div class="flex justify-between items-center">
+          <div class="flex items-center gap-[clamp(0.5rem,1vw,1rem)]">
+            <div class="bg-esxi-purple text-white p-[clamp(0.3rem,0.8vw,0.8rem)] rounded-lg flex items-center gap-2">
+              <i class="fa fa-server text-xl"></i>
+              <h1 class="text-[clamp(1.2rem,2vw,1.8rem)] font-bold">ESXI 监控中心</h1>
+            </div>
+            <div class="hidden md:flex items-center gap-3">
+              <span class="bg-success/20 text-success px-3 py-1 rounded-full text-sm flex items-center">
+                <i class="fa fa-check-circle mr-1"></i> 系统正常
+              </span>
+              <span class="bg-primary/20 text-primary px-3 py-1 rounded-full text-sm flex items-center">
+                <i class="fa fa-refresh mr-1"></i> 数据刷新中
+              </span>
+            </div>
+          </div>
+          
+          <div class="flex items-center gap-[clamp(0.5rem,1vw,1rem)]">
+            <div class="text-[clamp(0.8rem,1vw,1rem)] text-gray-300 font-mono" id="current-time">2024-06-15 14:30:25</div>
+            <button id="large-screen-toggle" class="large-screen-toggle bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded-lg transition-colors flex items-center gap-1">
+              <i class="fa fa-expand"></i>
+              <span>大屏模式</span>
+            </button>
+            <button id="refresh-data" class="bg-primary/20 hover:bg-primary/30 text-primary px-3 py-1 rounded-lg transition-colors flex items-center gap-1">
+              <i class="fa fa-refresh"></i>
+              <span>刷新</span>
+            </button>
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-4 gap-[clamp(0.5rem,1vw,1rem)] mt-[clamp(0.5rem,1vw,1rem)]">
+          <div class="bg-gray-800/50 rounded-lg p-3 flex items-center gap-3">
+            <div class="bg-esxi-purple/20 p-2 rounded-full">
+              <i class="fa fa-server text-esxi-purple text-xl"></i>
+            </div>
+            <div>
+              <p class="text-gray-400 text-sm">ESXI主机总数</p>
+              <p class="text-[clamp(1rem,1.5vw,1.5rem)] font-bold">8</p>
+            </div>
+          </div>
+          
+          <div class="bg-gray-800/50 rounded-lg p-3 flex items-center gap-3">
+            <div class="bg-primary/20 p-2 rounded-full">
+              <i class="fa fa-desktop text-primary text-xl"></i>
+            </div>
+            <div>
+              <p class="text-gray-400 text-sm">运行虚拟机</p>
+              <p class="text-[clamp(1rem,1.5vw,1.5rem)] font-bold">124</p>
+            </div>
+          </div>
+          
+          <div class="bg-gray-800/50 rounded-lg p-3 flex items-center gap-3">
+            <div class="bg-warning/20 p-2 rounded-full">
+              <i class="fa fa-exclamation-triangle text-warning text-xl"></i>
+            </div>
+            <div>
+              <p class="text-gray-400 text-sm">警告数量</p>
+              <p class="text-[clamp(1rem,1.5vw,1.5rem)] font-bold">3</p>
+            </div>
+          </div>
+          
+          <div class="bg-gray-800/50 rounded-lg p-3 flex items-center gap-3">
+            <div class="bg-danger/20 p-2 rounded-full">
+              <i class="fa fa-times-circle text-danger text-xl"></i>
+            </div>
+            <div>
+              <p class="text-gray-400 text-sm">错误数量</p>
+              <p class="text-[clamp(1rem,1.5vw,1.5rem)] font-bold">1</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ESXI主机状态 -->
+      <div class="grid-area: host-status border border-gray-700 rounded-lg p-[clamp(0.5rem,1vw,1rem)] bg-secondary/50">
+        <div class="flex justify-between items-center mb-[clamp(0.5rem,1vw,1rem)]">
+          <h2 class="text-[clamp(1rem,1.5vw,1.3rem)] font-bold flex items-center gap-2">
+            <i class="fa fa-server text-esxi-purple"></i>
+            ESXI主机状态
+          </h2>
+          <div class="text-sm text-gray-400">上次检查: <span id="last-host-check">2分钟前</span></div>
+        </div>
+        
+        <div class="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-[clamp(0.5rem,1vw,1rem)] h-[calc(100%-2rem)]">
+          <!-- 主机1 -->
+          <div class="bg-gray-800/50 rounded-lg p-3 flex flex-col hover:border-esxi-purple hover:border transition-all cursor-pointer">
+            <div class="flex justify-between items-start mb-2">
+              <div>
+                <h3 class="font-bold">esxi-01</h3>
+                <p class="text-xs text-gray-400">版本 7.0 U3</p>
+              </div>
+              <span class="bg-success/20 text-success text-xs px-2 py-0.5 rounded-full">运行中</span>
+            </div>
+            
+            <div class="space-y-2 flex-1">
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>CPU</span>
+                  <span>68%</span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-1.5">
+                  <div class="bg-primary h-full rounded-full" style="width: 68%"></div>
+                </div>
+              </div>
+              
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>内存</span>
+                  <span>75%</span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-1.5">
+                  <div class="bg-warning h-full rounded-full" style="width: 75%"></div>
+                </div>
+              </div>
+              
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>虚拟机</span>
+                  <span>16台</span>
+                </div>
+                <div class="flex gap-1 mt-1">
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="w-2 h-2 rounded-full bg-warning"></span>
+                  <span class="text-xs text-gray-400">+12</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 主机2 -->
+          <div class="bg-gray-800/50 rounded-lg p-3 flex flex-col hover:border-esxi-purple hover:border transition-all cursor-pointer">
+            <div class="flex justify-between items-start mb-2">
+              <div>
+                <h3 class="font-bold">esxi-02</h3>
+                <p class="text-xs text-gray-400">版本 7.0 U3</p>
+              </div>
+              <span class="bg-success/20 text-success text-xs px-2 py-0.5 rounded-full">运行中</span>
+            </div>
+            
+            <div class="space-y-2 flex-1">
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>CPU</span>
+                  <span>45%</span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-1.5">
+                  <div class="bg-success h-full rounded-full" style="width: 45%"></div>
+                </div>
+              </div>
+              
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>内存</span>
+                  <span>62%</span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-1.5">
+                  <div class="bg-primary h-full rounded-full" style="width: 62%"></div>
+                </div>
+              </div>
+              
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>虚拟机</span>
+                  <span>15台</span>
+                </div>
+                <div class="flex gap-1 mt-1">
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="text-xs text-gray-400">+11</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 主机3 -->
+          <div class="bg-gray-800/50 rounded-lg p-3 flex flex-col hover:border-esxi-purple hover:border transition-all cursor-pointer">
+            <div class="flex justify-between items-start mb-2">
+              <div>
+                <h3 class="font-bold">esxi-03</h3>
+                <p class="text-xs text-gray-400">版本 7.0 U3</p>
+              </div>
+              <span class="bg-warning/20 text-warning text-xs px-2 py-0.5 rounded-full">需注意</span>
+            </div>
+            
+            <div class="space-y-2 flex-1">
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>CPU</span>
+                  <span>89%</span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-1.5">
+                  <div class="bg-danger h-full rounded-full" style="width: 89%"></div>
+                </div>
+              </div>
+              
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>内存</span>
+                  <span>82%</span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-1.5">
+                  <div class="bg-danger h-full rounded-full" style="width: 82%"></div>
+                </div>
+              </div>
+              
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>虚拟机</span>
+                  <span>18台</span>
+                </div>
+                <div class="flex gap-1 mt-1">
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="w-2 h-2 rounded-full bg-danger"></span>
+                  <span class="w-2 h-2 rounded-full bg-warning"></span>
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="text-xs text-gray-400">+14</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 主机4 -->
+          <div class="bg-gray-800/50 rounded-lg p-3 flex flex-col hover:border-esxi-purple hover:border transition-all cursor-pointer">
+            <div class="flex justify-between items-start mb-2">
+              <div>
+                <h3 class="font-bold">esxi-04</h3>
+                <p class="text-xs text-gray-400">版本 7.0 U3</p>
+              </div>
+              <span class="bg-success/20 text-success text-xs px-2 py-0.5 rounded-full">运行中</span>
+            </div>
+            
+            <div class="space-y-2 flex-1">
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>CPU</span>
+                  <span>52%</span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-1.5">
+                  <div class="bg-success h-full rounded-full" style="width: 52%"></div>
+                </div>
+              </div>
+              
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>内存</span>
+                  <span>68%</span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-1.5">
+                  <div class="bg-primary h-full rounded-full" style="width: 68%"></div>
+                </div>
+              </div>
+              
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>虚拟机</span>
+                  <span>17台</span>
+                </div>
+                <div class="flex gap-1 mt-1">
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="text-xs text-gray-400">+13</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 更多主机... 仅展示4台，实际可根据需要扩展 -->
+          <div class="bg-gray-800/50 rounded-lg p-3 flex flex-col hover:border-esxi-purple hover:border transition-all cursor-pointer">
+            <div class="flex justify-between items-start mb-2">
+              <div>
+                <h3 class="font-bold">esxi-05</h3>
+                <p class="text-xs text-gray-400">版本 7.0 U3</p>
+              </div>
+              <span class="bg-success/20 text-success text-xs px-2 py-0.5 rounded-full">运行中</span>
+            </div>
+            
+            <div class="space-y-2 flex-1">
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>CPU</span>
+                  <span>38%</span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-1.5">
+                  <div class="bg-success h-full rounded-full" style="width: 38%"></div>
+                </div>
+              </div>
+              
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>内存</span>
+                  <span>55%</span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-1.5">
+                  <div class="bg-success h-full rounded-full" style="width: 55%"></div>
+                </div>
+              </div>
+              
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span>虚拟机</span>
+                  <span>14台</span>
+                </div>
+                <div class="flex gap-1 mt-1">
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="w-2 h-2 rounded-full bg-success"></span>
+                  <span class="text-xs text-gray-400">+10</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 资源告警 -->
+      <div class="grid-area: resources-alert border border-gray-700 rounded-lg p-[clamp(0.5rem,1vw,1rem)] bg-secondary/50">
+        <div class="flex justify-between items-center mb-[clamp(0.5rem,1vw,1rem)]">
+          <h2 class="text-[clamp(1rem,1.5vw,1.3rem)] font-bold flex items-center gap-2">
+            <i class="fa fa-exclamation-circle text-warning"></i>
+            资源告警
+          </h2>
+          <button class="text-xs text-primary hover:underline">查看全部</button>
+        </div>
+        
+        <div class="space-y-[clamp(0.5rem,1vw,1rem)] h-[calc(100%-2rem)] overflow-y-auto pr-1">
+          <!-- 告警1 -->
+          <div class="bg-danger/10 border border-danger/30 rounded-lg p-3 flex gap-3">
+            <div class="bg-danger/20 p-2 rounded-full mt-0.5">
+              <i class="fa fa-server text-danger"></i>
+            </div>
+            <div class="flex-1">
+              <div class="flex justify-between">
+                <h3 class="font-bold text-danger">CPU使用率过高</h3>
+                <span class="text-xs text-gray-400">10分钟前</span>
+              </div>
+              <p class="text-sm text-gray-300 mt-1">esxi-03 主机CPU使用率持续15分钟超过85%，当前91%</p>
+              <div class="flex justify-end mt-2">
+                <button class="text-xs bg-danger/20 hover:bg-danger/30 text-danger px-2 py-1 rounded transition-colors">迁移VM</button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 告警2 -->
+          <div class="bg-warning/10 border border-warning/30 rounded-lg p-3 flex gap-3">
+            <div class="bg-warning/20 p-2 rounded-full mt-0.5">
+              <i class="fa fa-microchip text-warning"></i>
+            </div>
+            <div class="flex-1">
+              <div class="flex justify-between">
+                <h3 class="font-bold text-warning">内存资源不足</h3>
+                <span class="text-xs text-gray-400">25分钟前</span>
+              </div>
+              <p class="text-sm text-gray-300 mt-1">esxi-03 主机内存使用率82%，建议迁移部分虚拟机</p>
+              <div class="flex justify-end mt-2">
+                <button class="text-xs bg-warning/20 hover:bg-warning/30 text-warning px-2 py-1 rounded transition-colors">查看建议</button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 告警3 -->
+          <div class="bg-warning/10 border border-warning/30 rounded-lg p-3 flex gap-3">
+            <div class="bg-warning/20 p-2 rounded-full mt-0.5">
+              <i class="fa fa-hdd-o text-warning"></i>
+            </div>
+            <div class="flex-1">
+              <div class="flex justify-between">
+                <h3 class="font-bold text-warning">存储空间不足</h3>
+                <span class="text-xs text-gray-400">1小时前</span>
+              </div>
+              <p class="text-sm text-gray-300 mt-1">Datastore "DS-02" 剩余空间低于20%，当前可用18%</p>
+              <div class="flex justify-end mt-2">
+                <button class="text-xs bg-warning/20 hover:bg-warning/30 text-warning px-2 py-1 rounded transition-colors">清理空间</button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 告警4 -->
+          <div class="bg-danger/10 border border-danger/30 rounded-lg p-3 flex gap-3">
+            <div class="bg-danger/20 p-2 rounded-full mt-0.5">
+              <i class="fa fa-power-off text-danger"></i>
+            </div>
+            <div class="flex-1">
+              <div class="flex justify-between">
+                <h3 class="font-bold text-danger">虚拟机异常关闭</h3>
+                <span class="text-xs text-gray-400">3小时前</span>
+              </div>
+              <p class="text-sm text-gray-300 mt-1">VM "web-server-05" 在esxi-02上异常关闭，原因待查</p>
+              <div class="flex justify-end mt-2">
+                <button class="text-xs bg-danger/20 hover:bg-danger/30 text-danger px-2 py-1 rounded transition-colors">重启VM</button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 告警5 -->
+          <div class="bg-primary/10 border border-primary/30 rounded-lg p-3 flex gap-3">
+            <div class="bg-primary/20 p-2 rounded-full mt-0.5">
+              <i class="fa fa-plug text-primary"></i>
+            </div>
+            <div class="flex-1">
+              <div class="flex justify-between">
+                <h3 class="font-bold text-primary">电源冗余丢失</h3>
+                <span class="text-xs text-gray-400">5小时前</span>
+              </div>
+              <p class="text-sm text-gray-300 mt-1">esxi-06 主机电源1故障，当前仅电源2工作</p>
+              <div class="flex justify-end mt-2">
+                <button class="text-xs bg-primary/20 hover:bg-primary/30 text-primary px-2 py-1 rounded transition-colors">查看详情</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 性能趋势 -->
+      <div class="grid-area: performance-trends border border-gray-700 rounded-lg p-[clamp(0.5rem,1vw,1rem)] bg-secondary/50">
+        <div class="flex justify-between items-center mb-[clamp(0.5rem,1vw,1rem)]">
+          <h2 class="text-[clamp(1rem,1.5vw,1.3rem)] font-bold flex items-center gap-2">
+            <i class="fa fa-line-chart text-primary"></i>
+            性能趋势
+          </h2>
+          <div class="flex gap-2">
+            <button class="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded transition-colors active-time-filter">24小时</button>
+            <button class="text-xs bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded transition-colors">7天</button>
+            <button class="text-xs bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded transition-colors">30天</button>
+          </div>
+        </div>
+        
+        <div class="h-[calc(100%-2rem)] flex flex-col gap-[clamp(0.5rem,1vw,1rem)]">
+          <div class="flex-1">
+            <p class="text-xs text-gray-400 mb-2">CPU平均使用率 (%)</p>
+            <canvas id="cpu-trend-chart"></canvas>
+          </div>
+          <div class="flex-1">
+            <p class="text-xs text-gray-400 mb-2">内存平均使用率 (%)</p>
+            <canvas id="memory-trend-chart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- 虚拟机列表 -->
+      <div class="grid-area: vm-list border border-gray-700 rounded-lg p-[clamp(0.5rem,1vw,1rem)] bg-secondary/50">
+        <div class="flex justify-between items-center mb-[clamp(0.5rem,1vw,1rem)]">
+          <h2 class="text-[clamp(1rem,1.5vw,1.3rem)] font-bold flex items-center gap-2">
+            <i class="fa fa-desktop text-success"></i>
+            关键虚拟机状态
+          </h2>
+          <div class="flex gap-2">
+            <div class="relative">
+              <input type="text" placeholder="搜索虚拟机..." class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1 text-sm w-40 pl-8 focus:outline-none focus:border-primary">
+              <i class="fa fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
+            </div>
+            <button class="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded transition-colors flex items-center gap-1">
+              <i class="fa fa-filter"></i> 筛选
+            </button>
+          </div>
+        </div>
+        
+        <div class="overflow-y-auto h-[calc(100%-2rem)]">
+          <table class="w-full min-w-[600px]">
+            <thead>
+              <tr class="border-b border-gray-700 text-left text-xs text-gray-400">
+                <th class="pb-2 font-medium">虚拟机名称</th>
+                <th class="pb-2 font-medium">主机</th>
+                <th class="pb-2 font-medium">状态</th>
+                <th class="pb-2 font-medium">CPU</th>
+                <th class="pb-2 font-medium">内存</th>
+                <th class="pb-2 font-medium">磁盘</th>
+                <th class="pb-2 font-medium">IP地址</th>
+                <th class="pb-2 font-medium">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b border-gray-800 hover:bg-gray-800/50 transition-colors">
+                <td class="py-2 text-sm">web-server-01</td>
+                <td class="py-2 text-sm">esxi-01</td>
+                <td class="py-2"><span class="bg-success/20 text-success text-xs px-2 py-0.5 rounded-full">运行中</span></td>
+                <td class="py-2 text-sm">18%</td>
+                <td class="py-2 text-sm">25%</td>
+                <td class="py-2 text-sm">45GB</td>
+                <td class="py-2 text-sm">192.168.1.101</td>
+                <td class="py-2">
+                  <button class="text-primary hover:text-primary/80 text-xs"><i class="fa fa-cog"></i></button>
+                </td>
+              </tr>
+              <tr class="border-b border-gray-800 hover:bg-gray-800/50 transition-colors">
+                <td class="py-2 text-sm">db-server-01</td>
+                <td class="py-2 text-sm">esxi-02</td>
+                <td class="py-2"><span class="bg-success/20 text-success text-xs px-2 py-0.5 rounded-full">运行中</span></td>
+                <td class="py-2 text-sm">42%</td>
+                <td class="py-2 text-sm">68%</td>
+                <td class="py-2 text-sm">256GB</td>
+                <td class="py-2 text-sm">192.168.1.201</td>
+                <td class="py-2">
+                  <button class="text-primary hover:text-primary/80 text-xs"><i class="fa fa-cog"></i></button>
+                </td>
+              </tr>
+              <tr class="border-b border-gray-800 hover:bg-gray-800/50 transition-colors">
+                <td class="py-2 text-sm">app-server-03</td>
+                <td class="py-2 text-sm">esxi-03</td>
+                <td class="py-2"><span class="bg-warning/20 text-warning text-xs px-2 py-0.5 rounded-full">需注意</span></td>
+                <td class="py-2 text-sm">78%</td>
+                <td class="py-2 text-sm">82%</td>
+                <td class="py-2 text-sm">128GB</td>
+                <td class="py-2 text-sm">192.168.1.303</td>
+                <td class="py-2">
+                  <button class="text-primary hover:text-primary/80 text-xs"><i class="fa fa-cog"></i></button>
+                </td>
+              </tr>
+              <tr class="border-b border-gray-800 hover:bg-gray-800/50 transition-colors">
+                <td class="py-2 text-sm">web-server-05</td>
+                <td class="py-2 text-sm">esxi-02</td>
+                <td class="py-2"><span class="bg-danger/20 text-danger text-xs px-2 py-0.5 rounded-full">已关闭</span></td>
+                <td class="py-2 text-sm">0%</td>
+                <td class="py-2 text-sm">0%</td>
+                <td class="py-2 text-sm">64GB</td>
+                <td class="py-2 text-sm">-</td>
+                <td class="py-2">
+                  <button class="text-primary hover:text-primary/80 text-xs"><i class="fa fa-cog"></i></button>
+                </td>
+              </tr>
+              <tr class="border-b border-gray-800 hover:bg-gray-800/50 transition-colors">
+                <td class="py-2 text-sm">file-server-01</td>
+                <td class="py-2 text-sm">esxi-04</td>
+                <td class="py-2"><span class="bg-success/20 text-success text-xs px-2 py-0.5 rounded-full">运行中</span></td>
+                <td class="py-2 text-sm">32%</td>
+                <td class="py-2 text-sm">45%</td>
+                <td class="py-2 text-sm">1.2TB</td>
+                <td class="py-2 text-sm">192.168.1.401</td>
+                <td class="py-2">
+                  <button class="text-primary hover:text-primary/80 text-xs"><i class="fa fa-cog"></i></button>
+                </td>
+              </tr>
+              <tr class="border-b border-gray-800 hover:bg-gray-800/50 transition-colors">
+                <td class="py-2 text-sm">dc-server-01</td>
+                <td class="py-2 text-sm">esxi-01</td>
+                <td class="py-2"><span class="bg-success/20 text-success text-xs px-2 py-0.5 rounded-full">运行中</span></td>
+                <td class="py-2 text-sm">28%</td>
+                <td class="py-2 text-sm">35%</td>
+                <td class="py-2 text-sm">128GB</td>
+                <td class="py-2 text-sm">192.168.1.501</td>
+                <td class="py-2">
+                  <button class="text-primary hover:text-primary/80 text-xs"><i class="fa fa-cog"></i></button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 存储监控 -->
+      <div class="grid-area: storage-monitor border border-gray-700 rounded-lg p-[clamp(0.5rem,1vw,1rem)] bg-secondary/50">
+        <div class="flex justify-between items-center mb-[clamp(0.5rem,1vw,1rem)]">
+          <h2 class="text-[clamp(1rem,1.5vw,1.3rem)] font-bold flex items-center gap-2">
+            <i class="fa fa-hdd-o text-warning"></i>
+            存储监控
+          </h2>
+          <button class="text-xs text-primary hover:underline">存储详情</button>
+        </div>
+        
+        <div class="h-[calc(100%-2rem)]">
+          <div class="h-1/2 mb-[clamp(0.5rem,1vw,1rem)]">
+            <canvas id="datastore-chart"></canvas>
+          </div>
+          
+          <div class="grid grid-cols-2 gap-[clamp(0.5rem,1vw,1rem)] h-1/2">
+            <div class="bg-gray-800/50 rounded-lg p-3">
+              <h3 class="text-sm font-medium mb-2">存储IOPS</h3>
+              <canvas id="storage-iops-chart"></canvas>
+            </div>
+            <div class="bg-gray-800/50 rounded-lg p-3">
+              <h3 class="text-sm font-medium mb-2">吞吐量 (MB/s)</h3>
+              <canvas id="storage-throughput-chart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 网络监控 -->
+      <div class="grid-area: network-monitor border border-gray-700 rounded-lg p-[clamp(0.5rem,1vw,1rem)] bg-secondary/50">
+        <div class="flex justify-between items-center mb-[clamp(0.5rem,1vw,1rem)]">
+          <h2 class="text-[clamp(1rem,1.5vw,1.3rem)] font-bold flex items-center gap-2">
+            <i class="fa fa-exchange text-success"></i>
+            网络监控
+          </h2>
+          <div class="flex gap-2">
+            <button class="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded transition-colors active-time-filter">24小时</button>
+            <button class="text-xs bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded transition-colors">7天</button>
+          </div>
+        </div>
+        
+        <div class="h-[calc(100%-2rem)]">
+          <div class="h-1/2 mb-[clamp(0.5rem,1vw,1rem)]">
+            <canvas id="network-traffic-chart"></canvas>
+          </div>
+          
+          <div class="grid grid-cols-2 gap-[clamp(0.5rem,1vw,1rem)] h-1/2">
+            <div class="bg-gray-800/50 rounded-lg p-3">
+              <h3 class="text-sm font-medium mb-2">VMkernel 端口状态</h3>
+              <div class="space-y-2">
+                <div class="flex justify-between items-center">
+                  <span class="text-xs">vmk0 (管理)</span>
+                  <span class="bg-success/20 text-success text-xs px-2 py-0.5 rounded-full">已连接</span>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-xs">vmk1 (VMotion)</span>
+                  <span class="bg-success/20 text-success text-xs px-2 py-0.5 rounded-full">已连接</span>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-xs">vmk2 (iSCSI)</span>
+                  <span class="bg-success/20 text-success text-xs px-2 py-0.5 rounded-full">已连接</span>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-xs">vmk3 (FT)</span>
+                  <span class="bg-gray-600/20 text-gray-400 text-xs px-2 py-0.5 rounded-full">未使用</span>
+                </div>
+              </div>
+            </div>
+            <div class="bg-gray-800/50 rounded-lg p-3">
+              <h3 class="text-sm font-medium mb-2">物理网卡状态</h3>
+              <div class="space-y-2">
+                <div class="flex justify-between items-center">
+                  <span class="text-xs">vmnic0</span>
+                  <div class="flex items-center gap-1">
+                    <span class="bg-success/20 text-success text-xs px-2 py-0.5 rounded-full">活动</span>
+                    <span class="text-xs text-gray-400">10Gbps</span>
+                  </div>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-xs">vmnic1</span>
+                  <div class="flex items-center gap-1">
+                    <span class="bg-success/20 text-success text-xs px-2 py-0.5 rounded-full">活动</span>
+                    <span class="text-xs text-gray-400">10Gbps</span>
+                  </div>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-xs">vmnic2</span>
+                  <div class="flex items-center gap-1">
+                    <span class="bg-warning/20 text-warning text-xs px-2 py-0.5 rounded-full">备用</span>
+                    <span class="text-xs text-gray-400">10Gbps</span>
+                  </div>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-xs">vmnic3</span>
+                  <div class="flex items-center gap-1">
+                    <span class="bg-danger/20 text-danger text-xs px-2 py-0.5 rounded-full">故障</span>
+                    <span class="text-xs text-gray-400">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 更新当前时间
+    function updateTime() {
+      const now = new Date();
+      document.getElementById('current-time').textContent = now.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      }).replace(/\//g, '-');
+    }
+    setInterval(updateTime, 1000);
+    updateTime();
+
+    // 大屏模式切换
+    document.getElementById('large-screen-toggle').addEventListener('click', function() {
+      const body = document.getElementById('app-body');
+      body.classList.toggle('large-screen');
+      
+      // 重新渲染图表以适应新布局
+      Object.values(charts).forEach(chart => chart.resize());
+      
+      // 更新按钮文本
+      const icon = this.querySelector('i');
+      const text = this.querySelector('span');
+      if (body.classList.contains('large-screen')) {
+        icon.className = 'fa fa-compress';
+        text.textContent = '退出大屏';
+      } else {
+        icon.className = 'fa fa-expand';
+        text.textContent = '大屏模式';
+      }
+    });
+
+    // 刷新数据按钮
+    document.getElementById('refresh-data').addEventListener('click', function() {
+      const icon = this.querySelector('i');
+      icon.classList.add('fa-spin');
+      
+      // 模拟数据刷新
+      setTimeout(() => {
+        icon.classList.remove('fa-spin');
+        // 更新最后检查时间
+        document.getElementById('last-host-check').textContent = '刚刚';
+        // 随机更新一些数据点使界面看起来有变化
+        updateRandomData();
+      }, 1000);
+    });
+
+    // 存储所有图表实例
+    const charts = {};
+
+    // 创建响应式图表
+    function createResponsiveChart(canvasId, config) {
+      const ctx = document.getElementById(canvasId).getContext('2d');
+      const chart = new Chart(ctx, {
+        ...config,
+        options: {
+          ...config.options,
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: {
+            duration: 1500
+          },
+          plugins: {
+            ...config.options.plugins,
+            legend: {
+              ...config.options.plugins?.legend,
+              labels: {
+                color: '#94A3B8',
+                font: {
+                  size: 10
+                }
+              }
+            },
+            tooltip: {
+              backgroundColor: 'rgba(15, 23, 42, 0.9)',
+              borderColor: '#334155',
+              borderWidth: 1
+            }
+          },
+          scales: {
+            ...config.options.scales,
+            x: {
+              ...config.options.scales?.x,
+              grid: {
+                color: 'rgba(59, 130, 246, 0.1)'
+              },
+              ticks: {
+                color: '#94A3B8',
+                font: {
+                  size: 9
+                }
+              }
+            },
+            y: {
+              ...config.options.scales?.y,
+              grid: {
+                color: 'rgba(59, 130, 246, 0.1)'
+              },
+              ticks: {
+                color: '#94A3B8',
+                font: {
+                  size: 9
+                }
+              }
+            }
+          }
+        }
+      });
+
+      charts[canvasId] = chart;
+      return chart;
+    }
+
+    // 生成随机时间标签（过去24小时）
+    function generateTimeLabels() {
+      const labels = [];
+      const now = new Date();
+      for (let i = 23; i >= 0; i--) {
+        const hour = new Date(now.getTime() - i * 60 * 60 * 1000);
+        labels.push(`${hour.getHours()}:00`);
+      }
+      return labels;
+    }
+
+    // 生成随机数据
+    function generateRandomData(count, min, max) {
+      return Array.from({ length: count }, () => Math.floor(Math.random() * (max - min + 1)) + min);
+    }
+
+    // CPU趋势图
+    const cpuLabels = generateTimeLabels();
+    createResponsiveChart('cpu-trend-chart', {
+      type: 'line',
+      data: {
+        labels: cpuLabels,
+        datasets: [
+          {
+            label: 'esxi-01',
+            data: generateRandomData(24, 40, 70),
+            borderColor: '#0EA5E9',
+            backgroundColor: 'rgba(14, 165, 233, 0.1)',
+            tension: 0.4,
+            fill: false
+          },
+          {
+            label: 'esxi-02',
+            data: generateRandomData(24, 30, 60),
+            borderColor: '#10B981',
+            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            tension: 0.4,
+            fill: false
+          },
+          {
+            label: 'esxi-03',
+            data: generateRandomData(24, 70, 90),
+            borderColor: '#EF4444',
+            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+            tension: 0.4,
+            fill: false
+          }
+        ]
+      },
+      options: {
+        plugins: { legend: { position: 'top' } },
+        scales: {
+          y: { min: 0, max: 100 }
+        }
+      }
+    });
+
+    // 内存趋势图
+    createResponsiveChart('memory-trend-chart', {
+      type: 'line',
+      data: {
+        labels: cpuLabels,
+        datasets: [
+          {
+            label: 'esxi-01',
+            data: generateRandomData(24, 60, 80),
+            borderColor: '#0EA5E9',
+            backgroundColor: 'rgba(14, 165, 233, 0.1)',
+            tension: 0.4,
+            fill: false
+          },
+          {
+            label: 'esxi-02',
+            data: generateRandomData(24, 50, 70),
+            borderColor: '#10B981',
+            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            tension: 0.4,
+            fill: false
+          },
+          {
+            label: 'esxi-03',
+            data: generateRandomData(24, 75, 90),
+            borderColor: '#EF4444',
+            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+            tension: 0.4,
+            fill: false
+          }
+        ]
+      },
+      options: {
+        plugins: { legend: { position: 'top' } },
+        scales: {
+          y: { min: 0, max: 100 }
+        }
+      }
+    });
+
+    // 数据存储使用情况
+    createResponsiveChart('datastore-chart', {
+      type: 'bar',
+      data: {
+        labels: ['DS-01', 'DS-02', 'DS-03', 'DS-04', 'DS-05'],
+        datasets: [
+          {
+            label: '已使用 (TB)',
+            data: [12.5, 18.2, 8.7, 15.3, 6.8],
+            backgroundColor: '#0EA5E9'
+          },
+          {
+            label: '剩余 (TB)',
+            data: [3.5, 4.3, 6.3, 4.7, 8.2],
+            backgroundColor: '#10B981'
+          }
+        ]
+      },
+      options: {
+        plugins: { legend: { position: 'top' } },
+        scales: {
+          x: { stacked: true },
+          y: { stacked: true, title: { display: true, text: 'TB' } }
+        }
+      }
+    });
+
+    // 存储IOPS
+    createResponsiveChart('storage-iops-chart', {
+      type: 'line',
+      data: {
+        labels: cpuLabels.slice(-12),
+        datasets: [
+          {
+            label: '读取',
+            data: generateRandomData(12, 800, 1500),
+            borderColor: '#0EA5E9',
+            backgroundColor: 'rgba(14, 165, 233, 0.1)',
+            tension: 0.4,
+            fill: true
+          },
+          {
+            label: '写入',
+            data: generateRandomData(12, 500, 1000),
+            borderColor: '#F59E0B',
+            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+            tension: 0.4,
+            fill: true
+          }
+        ]
+      },
+      options: {
+        plugins: { legend: { display: false } }
+      }
+    });
+
+    // 存储吞吐量
+    createResponsiveChart('storage-throughput-chart', {
+      type: 'line',
+      data: {
+        labels: cpuLabels.slice(-12),
+        datasets: [
+          {
+            label: '读取',
+            data: generateRandomData(12, 50, 120),
+            borderColor: '#0EA5E9',
+            backgroundColor: 'rgba(14, 165, 233, 0.1)',
+            tension: 0.4,
+            fill: true
+          },
+          {
+            label: '写入',
+            data: generateRandomData(12, 30, 80),
+            borderColor: '#F59E0B',
+            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+            tension: 0.4,
+            fill: true
+          }
+        ]
+      },
+      options: {
+        plugins: { legend: { display: false } }
+      }
+    });
+
+    // 网络流量
+    createResponsiveChart('network-traffic-chart', {
+      type: 'line',
+      data: {
+        labels: cpuLabels,
+        datasets: [
+          {
+            label: '接收',
+            data: generateRandomData(24, 300, 800),
+            borderColor: '#10B981',
+            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            tension: 0.4,
+            fill: true
+          },
+          {
+            label: '发送',
+            data: generateRandomData(24, 200, 600),
+            borderColor: '#0EA5E9',
+            backgroundColor: 'rgba(14, 165, 233, 0.1)',
+            tension: 0.4,
+            fill: true
+          }
+        ]
+      },
+      options: {
+        plugins: { legend: { position: 'top' } },
+        scales: {
+          y: { title: { display: true, text: 'MB/s' } }
+        }
+      }
+    });
+
+    // 随机更新数据
+    function updateRandomData() {
+      // 更新CPU趋势图
+      charts['cpu-trend-chart'].data.datasets.forEach(dataset => {
+        dataset.data = generateRandomData(24, 
+          dataset.label === 'esxi-03' ? 70 : 30, 
+          dataset.label === 'esxi-03' ? 90 : 70
+        );
+      });
+      charts['cpu-trend-chart'].update();
+      
+      // 更新内存趋势图
+      charts['memory-trend-chart'].data.datasets.forEach(dataset => {
+        dataset.data = generateRandomData(24, 
+          dataset.label === 'esxi-03' ? 75 : 50, 
+          dataset.label === 'esxi-03' ? 90 : 80
+        );
+      });
+      charts['memory-trend-chart'].update();
+      
+      // 更新接口调用量
+      const randomValue = Math.floor(Math.random() * 100) + 2856391;
+    }
+
+    // 初始化时随机更新一次数据
+    setTimeout(updateRandomData, 1000);
+  </script>
+</body>
+</html>
