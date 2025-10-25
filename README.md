@@ -38,3 +38,13 @@ Prometheus + vmware_exporter：开源监控方案，可直接采集 ESXI metrics
 SNMP：用于网络设备监控（如物理交换机）
 
 <img width="1920" height="1080" alt="屏幕截图 2025-10-25 155014" src="https://github.com/user-attachments/assets/b2992cd7-e6d9-4fb5-b542-4b8e728e02ea" />
+
+部署建议
+架构：前端（Nginx 部署静态页面）→ 后端 API → 数据库（InfluxDB + MySQL）
+安全性：
+后端 API 添加认证（如 JWT）
+ESXI 账号使用最小权限（仅允许读取监控数据）
+配置 SSL 加密传输
+扩展性：
+若主机数量多，可分布式部署采集器
+用消息队列（如 RabbitMQ）解耦采集和存储
