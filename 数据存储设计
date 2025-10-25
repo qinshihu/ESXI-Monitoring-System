@@ -1,0 +1,33 @@
+时序数据库（以 InfluxDB 为例）
+sql
+-- 创建数据库
+CREATE DATABASE esxi_monitor
+
+-- 写入CPU数据（measurement=指标类型，tags=维度，fields=值）
+INSERT cpu_usage,host=esxi-01,type=host value=68.5 1698230400000000000
+-- 字段说明：
+-- host=esxi-01：标签（主机名）
+-- value=68.5：字段（CPU使用率，单位%）
+-- 1698230400000000000：时间戳（纳秒）
+
+关系型数据库（MySQL 示例表结构）
+sql
+-- ESXI主机表
+CREATE TABLE esxi_hosts (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(50) NOT NULL,  -- 主机名（如esxi-01）
+    ip VARCHAR(20) NOT NULL,    -- IP地址
+    version VARCHAR(20),        -- 版本（如7.0 U3）
+    status ENUM('running', 'warning', 'error') DEFAULT 'running',
+    last_check_time DATETIME    -- 最后检查时间
+);
+
+-- 虚拟机表
+CREATE TABLE virtual_machines (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(50) NOT NULL,  -- 虚拟机名（如web-server-01）
+    host_id INT,                -- 所属主机ID（关联esxi_hosts）
+    status ENUM('running', 'stopped', 'warning') DEFAULT 'stopped',
+    ip VARCHAR(20),             -- IP地址
+    FOREIGN KEY (host_id) REFERENCES esxi_hosts(id)
+);
