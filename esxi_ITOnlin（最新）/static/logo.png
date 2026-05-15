@@ -1,0 +1,35 @@
+<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg">
+  <rect width="400" height="300" fill="#FFFFFF"/>
+  <!-- 背景服务器机架 -->
+  <g stroke="#D0D8E0" stroke-width="2" fill="none">
+    <!-- 左侧机架 -->
+    <rect x="10" y="10" width="100" height="280"/>
+    <rect x="110" y="20" width="10" height="270"/>
+    <!-- 右侧机架 -->
+    <rect x="290" y="10" width="100" height="280"/>
+    <rect x="280" y="20" width="10" height="270"/>
+    <!-- 服务器单元 -->
+    <!-- 左侧服务器 -->
+    <rect x="20" y="20" width="90" height="60"/>
+    <rect x="20" y="90" width="90" height="60"/>
+    <rect x="20" y="160" width="90" height="60"/>
+    <rect x="20" y="230" width="90" height="60"/>
+    <!-- 右侧服务器 -->
+    <rect x="300" y="20" width="90" height="60"/>
+    <rect x="300" y="90" width="90" height="60"/>
+    <rect x="300" y="160" width="90" height="60"/>
+    <rect x="300" y="230" width="90" height="60"/>
+  </g>
+  <!-- 紫色方形背景 -->
+  <rect x="80" y="100" width="150" height="150" rx="10" fill="#9370DB"/>
+  <!-- 蓝色IT方块 -->
+  <rect x="100" y="110" width="110" height="110" rx="5" fill="#2161D3"/>
+  <!-- IT文字 -->
+  <text x="155" y="180" font-family="Arial" font-size="60" font-weight="bold" fill="white" text-anchor="middle">IT</text>
+  <!-- Online文字 -->
+  <text x="310" y="180" font-family="Arial" font-size="60" font-weight="bold" fill="#2161D3" text-anchor="middle">Online</text>
+  <!-- 无线信号 -->
+  <path d="M350 145 L350 130" stroke="#2161D3" stroke-width="6" stroke-linecap="round"/>
+  <path d="M360 150 L375 140" stroke="#2161D3" stroke-width="4" stroke-linecap="round"/>
+  <path d="M370 160 L395 145" stroke="#2161D3" stroke-width="3" stroke-linecap="round"/>
+</svg>

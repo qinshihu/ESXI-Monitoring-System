@@ -1,0 +1,1460 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESXI监控系统</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Font Awesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <!-- 引入 Chart.js (使用备用CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+    <!-- 备用加载脚本 -->
+    <script>
+        // 检查Chart是否加载成功
+        if (typeof Chart === 'undefined') {
+            console.warn('Chart.js 未加载成功，尝试使用备用方法...');
+            // 创建备用图表渲染函数
+            window.fallbackChartRender = function() {
+                // 为CPU和内存图表容器添加简单的文本显示
+                const cpuChartContainer = document.getElementById('cpuChart').parentNode;
+                cpuChartContainer.innerHTML = '<div class="flex items-center justify-center h-full">' +
+                    '<p class="text-dark-500">CPU使用率图表：平均60%</p></div>';
+                
+                const memoryChartContainer = document.getElementById('memoryChart').parentNode;
+                memoryChartContainer.innerHTML = '<div class="flex items-center justify-center h-full">' +
+                    '<p class="text-dark-500">内存使用率图表：平均80%</p></div>';
+            };
+        }
+    </script>
+    <!-- Tailwind CSS 配置 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#165DFF',
+                        secondary: '#4096FF',
+                        success: '#52C41A',
+                        warning: '#FAAD14',
+                        error: '#F5222D',
+                        info: '#1890FF',
+                        dark: '#1F2937',
+                        'dark-800': '#111827',
+                        'dark-700': '#374151',
+                        'dark-600': '#4B5563',
+                        'dark-500': '#6B7280',
+                        'dark-400': '#9CA3AF',
+                        'dark-300': '#D1D5DB',
+                        'dark-200': '#E5E7EB',
+                        'dark-100': '#F3F4F6',
+                        'dark-50': '#F9FAFB'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif']
+                    },
+                    boxShadow: {
+                        'card': '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                        'card-hover': '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .scrollbar-hide {
+                -ms-overflow-style: none;
+                scrollbar-width: none;
+            }
+            .scrollbar-hide::-webkit-scrollbar {
+                display: none;
+            }
+            .transition-all-300 {
+                transition: all 300ms ease-in-out;
+            }
+            .card-gradient {
+                background: linear-gradient(135deg, var(--tw-gradient-from) 0%, var(--tw-gradient-to) 100%);
+            }
+        }
+    </style>
+    <style>
+        /* 基础样式 */
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background-color: #f9fafb;
+            color: #1f2937;
+        }
+        
+        /* 动画效果 */
+        .fade-in {
+            animation: fadeIn 0.5s ease-in-out;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        /* 进度条样式 */
+        .progress-bar {
+            transition: width 0.5s ease-in-out;
+        }
+        
+        /* 平滑滚动 */
+        html {
+            scroll-behavior: smooth;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+    <!-- 侧边栏 -->
+    <div class="flex h-screen overflow-hidden">
+        <!-- 侧边导航 -->
+        <aside id="sidebar" class="w-64 bg-dark-800 text-white flex flex-col transition-all duration-300 shadow-lg">
+            <!-- Logo -->
+            <div class="p-4 flex items-center space-x-3 border-b border-dark-700">
+                <div class="w-10 h-10 rounded-lg bg-primary flex items-center justify-center">
+                    <i class="fa fa-server text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold">ESXI监控系统</h1>
+                    <p class="text-dark-400 text-sm">v1.0.0</p>
+                </div>
+            </div>
+            
+            <!-- 导航菜单 -->
+            <nav class="flex-1 p-4 overflow-y-auto">
+                <ul class="space-y-1">
+                    <li>
+                        <a href="#dashboard" class="flex items-center space-x-3 p-3 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-all-300">
+                            <i class="fa fa-tachometer text-xl w-6"></i>
+                            <span>仪表盘</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="#hosts" class="flex items-center space-x-3 p-3 rounded-lg text-dark-300 hover:bg-dark-700 transition-all-300">
+                            <i class="fa fa-desktop text-xl w-6"></i>
+                            <span>主机管理</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="#vms" class="flex items-center space-x-3 p-3 rounded-lg text-dark-300 hover:bg-dark-700 transition-all-300">
+                            <i class="fa fa-vmware text-xl w-6"></i>
+                            <span>虚拟机监控</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="#alerts" class="flex items-center space-x-3 p-3 rounded-lg text-dark-300 hover:bg-dark-700 transition-all-300">
+                            <i class="fa fa-bell text-xl w-6"></i>
+                            <span>告警中心</span>
+                            <span class="ml-auto bg-error text-white text-xs px-2 py-1 rounded-full">5</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="#metrics" class="flex items-center space-x-3 p-3 rounded-lg text-dark-300 hover:bg-dark-700 transition-all-300">
+                            <i class="fa fa-line-chart text-xl w-6"></i>
+                            <span>性能分析</span>
+                        </a>
+                    </li>
+                </ul>
+                
+                <div class="mt-8 border-t border-dark-700 pt-6">
+                    <h3 class="text-dark-400 text-xs uppercase font-semibold mb-2 px-3">系统设置</h3>
+                    <ul class="space-y-1">
+                        <li>
+                            <a href="#settings" class="flex items-center space-x-3 p-3 rounded-lg text-dark-300 hover:bg-dark-700 transition-all-300">
+                                <i class="fa fa-cog text-xl w-6"></i>
+                                <span>配置管理</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="#logs" class="flex items-center space-x-3 p-3 rounded-lg text-dark-300 hover:bg-dark-700 transition-all-300">
+                                <i class="fa fa-file-text text-xl w-6"></i>
+                                <span>日志查看</span>
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </nav>
+            
+            <!-- 底部用户信息 -->
+            <div class="p-4 border-t border-dark-700">
+                <div class="flex items-center space-x-3">
+                    <img src="https://picsum.photos/id/1005/40/40" alt="用户头像" class="w-10 h-10 rounded-full">
+                    <div>
+                        <p class="font-medium">管理员</p>
+                        <p class="text-dark-400 text-sm">admin@example.com</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- 主内容区 -->
+        <div class="flex-1 flex flex-col overflow-hidden">
+            <!-- 顶部导航栏 -->
+            <header class="h-16 bg-white border-b border-dark-200 flex items-center justify-between px-6">
+                <div class="flex items-center">
+                    <button id="toggle-sidebar" class="mr-4 text-dark-600 hover:text-primary focus:outline-none">
+                        <i class="fa fa-bars text-xl"></i>
+                    </button>
+                    <h2 class="text-lg font-semibold">仪表盘</h2>
+                </div>
+                
+                <div class="flex items-center space-x-4">
+                    <!-- 搜索框 -->
+                    <div class="relative hidden md:block">
+                        <input type="text" placeholder="搜索..." class="pl-10 pr-4 py-2 rounded-lg border border-dark-300 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all-300">
+                        <i class="fa fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-dark-500"></i>
+                    </div>
+                    
+                    <!-- 通知图标 -->
+                    <button class="relative p-2 rounded-full hover:bg-dark-100 transition-all-300">
+                        <i class="fa fa-bell text-dark-600"></i>
+                        <span class="absolute top-1 right-1 w-2 h-2 bg-error rounded-full"></span>
+                    </button>
+                    
+                    <!-- 帮助图标 -->
+                    <button class="p-2 rounded-full hover:bg-dark-100 transition-all-300">
+                        <i class="fa fa-question-circle text-dark-600"></i>
+                    </button>
+                </div>
+            </header>
+            
+            <!-- 页面内容 -->
+            <main class="flex-1 overflow-y-auto bg-dark-100 p-6">
+                <!-- 仪表盘区域 -->
+                <section id="dashboard" class="mb-10">
+                    <div class="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
+                        <div>
+                            <h1 class="text-[clamp(1.5rem,3vw,2.5rem)] font-bold text-dark">仪表盘概览</h1>
+                            <p class="text-dark-500">实时监控您的ESXI环境</p>
+                        </div>
+                        <div class="mt-4 md:mt-0 flex space-x-3">
+                            <button class="px-4 py-2 bg-white border border-dark-300 rounded-lg hover:bg-dark-50 transition-all-300 flex items-center space-x-2">
+                                <i class="fa fa-download text-dark-600"></i>
+                                <span>导出报告</span>
+                            </button>
+                            <button class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-all-300 flex items-center space-x-2">
+                                <i class="fa fa-refresh"></i>
+                                <span>刷新数据</span>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 状态卡片 -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        <!-- 主机总数卡片 -->
+                        <div class="bg-white rounded-xl shadow-card p-6 hover:shadow-card-hover transition-all-300">
+                            <div class="flex items-start justify-between">
+                                <div>
+                                    <p class="text-dark-500 text-sm font-medium">主机总数</p>
+                                    <h3 class="text-3xl font-bold mt-2" id="total-hosts">3</h3>
+                                    <p class="text-dark-500 text-sm mt-2">
+                                        <span class="text-success flex items-center">
+                                            <i class="fa fa-arrow-up mr-1"></i> 1 台
+                                        </span>
+                                        较上周
+                                    </p>
+                                </div>
+                                <div class="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                                    <i class="fa fa-server text-2xl"></i>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 虚拟机总数卡片 -->
+                        <div class="bg-white rounded-xl shadow-card p-6 hover:shadow-card-hover transition-all-300">
+                            <div class="flex items-start justify-between">
+                                <div>
+                                    <p class="text-dark-500 text-sm font-medium">虚拟机总数</p>
+                                    <h3 class="text-3xl font-bold mt-2" id="total-vms">15</h3>
+                                    <p class="text-dark-500 text-sm mt-2">
+                                        <span class="text-success flex items-center">
+                                            <i class="fa fa-arrow-up mr-1"></i> 3 台
+                                        </span>
+                                        较上周
+                                    </p>
+                                </div>
+                                <div class="w-12 h-12 rounded-lg bg-secondary/10 flex items-center justify-center text-secondary">
+                                    <i class="fa fa-vmware text-2xl"></i>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 运行中VM卡片 -->
+                        <div class="bg-white rounded-xl shadow-card p-6 hover:shadow-card-hover transition-all-300">
+                            <div class="flex items-start justify-between">
+                                <div>
+                                    <p class="text-dark-500 text-sm font-medium">运行中VM</p>
+                                    <h3 class="text-3xl font-bold mt-2" id="running-vms">12</h3>
+                                    <p class="text-dark-500 text-sm mt-2">
+                                        <span class="text-dark-600">80%</span>
+                                        的VM处于运行状态
+                                    </p>
+                                </div>
+                                <div class="w-12 h-12 rounded-lg bg-success/10 flex items-center justify-center text-success">
+                                    <i class="fa fa-play-circle text-2xl"></i>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 告警数量卡片 -->
+                        <div class="bg-white rounded-xl shadow-card p-6 hover:shadow-card-hover transition-all-300">
+                            <div class="flex items-start justify-between">
+                                <div>
+                                    <p class="text-dark-500 text-sm font-medium">活跃告警</p>
+                                    <h3 class="text-3xl font-bold mt-2" id="active-alerts">5</h3>
+                                    <p class="text-dark-500 text-sm mt-2">
+                                        <span class="text-error flex items-center">
+                                            <i class="fa fa-arrow-up mr-1"></i> 2 个
+                                        </span>
+                                        较昨日
+                                    </p>
+                                </div>
+                                <div class="w-12 h-12 rounded-lg bg-error/10 flex items-center justify-center text-error">
+                                    <i class="fa fa-bell text-2xl"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 资源使用率图表 -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                        <!-- CPU 使用率图表 -->
+                        <div class="bg-white rounded-xl shadow-card p-6 hover:shadow-card-hover transition-all-300">
+                            <div class="flex items-center justify-between mb-6">
+                                <h3 class="text-lg font-semibold">CPU使用率</h3>
+                                <div class="flex space-x-2">
+                                    <button class="px-3 py-1 text-sm rounded-lg bg-dark-100 text-dark-600 hover:bg-dark-200 transition-all-300">今日</button>
+                                    <button class="px-3 py-1 text-sm rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-all-300">本周</button>
+                                    <button class="px-3 py-1 text-sm rounded-lg bg-dark-100 text-dark-600 hover:bg-dark-200 transition-all-300">本月</button>
+                                </div>
+                            </div>
+                            <div class="h-64">
+                                <canvas id="cpuChart"></canvas>
+                            </div>
+                        </div>
+                        
+                        <!-- 内存使用率图表 -->
+                        <div class="bg-white rounded-xl shadow-card p-6 hover:shadow-card-hover transition-all-300">
+                            <div class="flex items-center justify-between mb-6">
+                                <h3 class="text-lg font-semibold">内存使用率</h3>
+                                <div class="flex space-x-2">
+                                    <button class="px-3 py-1 text-sm rounded-lg bg-dark-100 text-dark-600 hover:bg-dark-200 transition-all-300">今日</button>
+                                    <button class="px-3 py-1 text-sm rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-all-300">本周</button>
+                                    <button class="px-3 py-1 text-sm rounded-lg bg-dark-100 text-dark-600 hover:bg-dark-200 transition-all-300">本月</button>
+                                </div>
+                            </div>
+                            <div class="h-64">
+                                <canvas id="memoryChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 主机列表和最近告警 -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <!-- 主机列表 -->
+                        <div class="bg-white rounded-xl shadow-card p-6 hover:shadow-card-hover transition-all-300 lg:col-span-2">
+                            <div class="flex items-center justify-between mb-6">
+                                <h3 class="text-lg font-semibold">ESXi主机列表</h3>
+                                <button id="add-host-btn" class="bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg transition-all-300">
+                                    <i class="fa fa-plus mr-2"></i>添加主机
+                                </button>
+                            </div>
+                            <div class="overflow-x-auto">
+                                <table class="min-w-full divide-y divide-dark-200">
+                                    <thead>
+                                        <tr>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-dark-500 uppercase tracking-wider">主机信息</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-dark-500 uppercase tracking-wider">状态</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-dark-500 uppercase tracking-wider">CPU使用率</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-dark-500 uppercase tracking-wider">内存使用率</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-dark-500 uppercase tracking-wider">虚拟机数量</th>
+                                            <th class="px-4 py-3 text-left text-xs font-medium text-dark-500 uppercase tracking-wider">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-dark-200" id="host-list">
+                                        <!-- 主机1 -->
+                                        <tr class="hover:bg-dark-50 transition-all-300">
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                <div class="flex items-center">
+                                                    <div class="w-8 h-8 rounded-lg bg-success/10 flex items-center justify-center text-success mr-3">
+                                                        <i class="fa fa-server"></i>
+                                                    </div>
+                                                    <div>
+                                                        <div class="font-medium">esxi-01</div>
+                                                        <div class="text-sm text-dark-500">192.168.1.100</div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                <span class="px-2 py-1 text-xs font-semibold rounded-full bg-success/10 text-success">
+                                                    已连接
+                                                </span>
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                <div class="flex items-center">
+                                                    <div class="w-24 bg-dark-200 rounded-full h-2 mr-2">
+                                                        <div class="bg-success h-2 rounded-full progress-bar" style="width: 45%"></div>
+                                                    </div>
+                                                    <span class="text-sm font-medium">45%</span>
+                                                </div>
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                <div class="flex items-center">
+                                                    <div class="w-24 bg-dark-200 rounded-full h-2 mr-2">
+                                                        <div class="bg-success h-2 rounded-full progress-bar" style="width: 70%"></div>
+                                                    </div>
+                                                    <span class="text-sm font-medium">70%</span>
+                                                </div>
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap text-sm">6</td>
+                                            <td class="px-4 py-4 whitespace-nowrap text-sm">
+                                                <div class="flex space-x-2">
+                                                    <button class="text-primary hover:text-primary/80 transition-all-300 view-host" data-id="1">
+                                                        <i class="fa fa-eye"></i>
+                                                    </button>
+                                                    <button class="text-dark-500 hover:text-dark-700 transition-all-300">
+                                                        <i class="fa fa-cog"></i>
+                                                    </button>
+                                                    <button class="text-error hover:text-error/80 transition-all-300 delete-host" data-id="1" data-name="esxi-01">
+                                                        <i class="fa fa-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        <!-- 主机2 -->
+                                        <tr class="hover:bg-dark-50 transition-all-300">
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                <div class="flex items-center">
+                                                    <div class="w-8 h-8 rounded-lg bg-warning/10 flex items-center justify-center text-warning mr-3">
+                                                        <i class="fa fa-server"></i>
+                                                    </div>
+                                                    <div>
+                                                        <div class="font-medium">esxi-02</div>
+                                                        <div class="text-sm text-dark-500">192.168.1.101</div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                <span class="px-2 py-1 text-xs font-semibold rounded-full bg-warning/10 text-warning">
+                                                    警告
+                                                </span>
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                <div class="flex items-center">
+                                                    <div class="w-24 bg-dark-200 rounded-full h-2 mr-2">
+                                                        <div class="bg-warning h-2 rounded-full progress-bar" style="width: 85%"></div>
+                                                    </div>
+                                                    <span class="text-sm font-medium">85%</span>
+                                                </div>
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                <div class="flex items-center">
+                                                    <div class="w-24 bg-dark-200 rounded-full h-2 mr-2">
+                                                        <div class="bg-warning h-2 rounded-full progress-bar" style="width: 82%"></div>
+                                                    </div>
+                                                    <span class="text-sm font-medium">82%</span>
+                                                </div>
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap text-sm">5</td>
+                                            <td class="px-4 py-4 whitespace-nowrap text-sm">
+                                                <div class="flex space-x-2">
+                                                    <button class="text-primary hover:text-primary/80 transition-all-300 view-host" data-id="2">
+                                                        <i class="fa fa-eye"></i>
+                                                    </button>
+                                                    <button class="text-dark-500 hover:text-dark-700 transition-all-300">
+                                                        <i class="fa fa-cog"></i>
+                                                    </button>
+                                                    <button class="text-error hover:text-error/80 transition-all-300 delete-host" data-id="2" data-name="esxi-02">
+                                                        <i class="fa fa-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        <!-- 主机3 -->
+                                        <tr class="hover:bg-dark-50 transition-all-300">
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                <div class="flex items-center">
+                                                    <div class="w-8 h-8 rounded-lg bg-error/10 flex items-center justify-center text-error mr-3">
+                                                        <i class="fa fa-server"></i>
+                                                    </div>
+                                                    <div>
+                                                        <div class="font-medium">esxi-03</div>
+                                                        <div class="text-sm text-dark-500">192.168.1.102</div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                <span class="px-2 py-1 text-xs font-semibold rounded-full bg-error/10 text-error">
+                                                    错误
+                                                </span>
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                <div class="flex items-center">
+                                                    <div class="w-24 bg-dark-200 rounded-full h-2 mr-2">
+                                                        <div class="bg-error h-2 rounded-full progress-bar" style="width: 95%"></div>
+                                                    </div>
+                                                    <span class="text-sm font-medium">95%</span>
+                                                </div>
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap">
+                                                <div class="flex items-center">
+                                                    <div class="w-24 bg-dark-200 rounded-full h-2 mr-2">
+                                                        <div class="bg-error h-2 rounded-full progress-bar" style="width: 92%"></div>
+                                                    </div>
+                                                    <span class="text-sm font-medium">92%</span>
+                                                </div>
+                                            </td>
+                                            <td class="px-4 py-4 whitespace-nowrap text-sm">4</td>
+                                            <td class="px-4 py-4 whitespace-nowrap text-sm">
+                                                <div class="flex space-x-2">
+                                                    <button class="text-primary hover:text-primary/80 transition-all-300 view-host" data-id="3">
+                                                        <i class="fa fa-eye"></i>
+                                                    </button>
+                                                    <button class="text-dark-500 hover:text-dark-700 transition-all-300">
+                                                        <i class="fa fa-cog"></i>
+                                                    </button>
+                                                    <button class="text-error hover:text-error/80 transition-all-300 delete-host" data-id="3" data-name="esxi-03">
+                                                        <i class="fa fa-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <!-- 最近告警 -->
+                        <div class="bg-white rounded-xl shadow-card p-6 hover:shadow-card-hover transition-all-300">
+                            <div class="flex items-center justify-between mb-6">
+                                <h3 class="text-lg font-semibold">最近告警</h3>
+                                <a href="#alerts" class="text-primary hover:text-primary/80 transition-all-300 text-sm">
+                                    查看全部 <i class="fa fa-arrow-right ml-1"></i>
+                                </a>
+                            </div>
+                            <div class="space-y-4 max-h-80 overflow-y-auto scrollbar-hide">
+                                <!-- 告警1 -->
+                                <div class="p-4 border border-error/30 bg-error/5 rounded-lg">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <div class="flex items-center">
+                                            <i class="fa fa-exclamation-circle text-error mr-2"></i>
+                                            <span class="font-medium text-error">CPU使用率过高</span>
+                                        </div>
+                                        <span class="text-xs text-dark-500">5分钟前</span>
+                                    </div>
+                                    <p class="text-sm text-dark-600 mb-2">主机 esxi-03 CPU使用率达到95%，超过阈值</p>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-xs px-2 py-1 bg-error/10 text-error rounded-full">严重</span>
+                                        <button class="text-xs text-primary hover:text-primary/80 transition-all-300">
+                                            查看详情
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <!-- 告警2 -->
+                                <div class="p-4 border border-error/30 bg-error/5 rounded-lg">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <div class="flex items-center">
+                                            <i class="fa fa-exclamation-circle text-error mr-2"></i>
+                                            <span class="font-medium text-error">内存使用率过高</span>
+                                        </div>
+                                        <span class="text-xs text-dark-500">12分钟前</span>
+                                    </div>
+                                    <p class="text-sm text-dark-600 mb-2">主机 esxi-03 内存使用率达到92%，超过阈值</p>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-xs px-2 py-1 bg-error/10 text-error rounded-full">严重</span>
+                                        <button class="text-xs text-primary hover:text-primary/80 transition-all-300">
+                                            查看详情
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <!-- 告警3 -->
+                                <div class="p-4 border border-warning/30 bg-warning/5 rounded-lg">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <div class="flex items-center">
+                                            <i class="fa fa-exclamation-triangle text-warning mr-2"></i>
+                                            <span class="font-medium text-warning">CPU使用率警告</span>
+                                        </div>
+                                        <span class="text-xs text-dark-500">23分钟前</span>
+                                    </div>
+                                    <p class="text-sm text-dark-600 mb-2">主机 esxi-02 CPU使用率达到85%，超过警告阈值</p>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-xs px-2 py-1 bg-warning/10 text-warning rounded-full">警告</span>
+                                        <button class="text-xs text-primary hover:text-primary/80 transition-all-300">
+                                            查看详情
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <!-- 告警4 -->
+                                <div class="p-4 border border-warning/30 bg-warning/5 rounded-lg">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <div class="flex items-center">
+                                            <i class="fa fa-exclamation-triangle text-warning mr-2"></i>
+                                            <span class="font-medium text-warning">内存使用率警告</span>
+                                        </div>
+                                        <span class="text-xs text-dark-500">35分钟前</span>
+                                    </div>
+                                    <p class="text-sm text-dark-600 mb-2">主机 esxi-01 内存使用率达到78%，超过警告阈值</p>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-xs px-2 py-1 bg-warning/10 text-warning rounded-full">警告</span>
+                                        <button class="text-xs text-primary hover:text-primary/80 transition-all-300">
+                                            查看详情
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <!-- 告警5 -->
+                                <div class="p-4 border border-info/30 bg-info/5 rounded-lg">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <div class="flex items-center">
+                                            <i class="fa fa-info-circle text-info mr-2"></i>
+                                            <span class="font-medium text-info">虚拟机状态变化</span>
+                                        </div>
+                                        <span class="text-xs text-dark-500">1小时前</span>
+                                    </div>
+                                    <p class="text-sm text-dark-600 mb-2">虚拟机 web-server-01 已关闭电源</p>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-xs px-2 py-1 bg-info/10 text-info rounded-full">信息</span>
+                                        <button class="text-xs text-primary hover:text-primary/80 transition-all-300">
+                                            查看详情
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+    
+    <!-- 主机详情模态框 -->
+    <div id="host-modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center fade-in">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-4xl max-h-[90vh] overflow-auto">
+            <div class="p-6 border-b border-dark-200">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-xl font-bold" id="modal-host-name">esxi-01</h3>
+                    <button id="close-modal" class="text-dark-500 hover:text-dark-700 transition-all-300">
+                        <i class="fa fa-times text-xl"></i>
+                    </button>
+                </div>
+                <p class="text-dark-500" id="modal-host-ip">192.168.1.100</p>
+            </div>
+            <div class="p-6">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                    <div class="border border-dark-200 rounded-lg p-4">
+                        <p class="text-dark-500 text-sm mb-1">状态</p>
+                        <p class="font-medium" id="modal-host-status">已连接</p>
+                    </div>
+                    <div class="border border-dark-200 rounded-lg p-4">
+                        <p class="text-dark-500 text-sm mb-1">版本</p>
+                        <p class="font-medium" id="modal-host-version">7.0 Update 3</p>
+                    </div>
+                    <div class="border border-dark-200 rounded-lg p-4">
+                        <p class="text-dark-500 text-sm mb-1">CPU核心</p>
+                        <p class="font-medium" id="modal-host-cpu">16</p>
+                    </div>
+                    <div class="border border-dark-200 rounded-lg p-4">
+                        <p class="text-dark-500 text-sm mb-1">总内存</p>
+                        <p class="font-medium" id="modal-host-memory">64 GB</p>
+                    </div>
+                    <div class="border border-dark-200 rounded-lg p-4">
+                        <p class="text-dark-500 text-sm mb-1">存储容量</p>
+                        <p class="font-medium" id="modal-host-storage">4 TB</p>
+                    </div>
+                    <div class="border border-dark-200 rounded-lg p-4">
+                        <p class="text-dark-500 text-sm mb-1">虚拟机数量</p>
+                        <p class="font-medium" id="modal-host-vm-count">6</p>
+                    </div>
+                </div>
+                
+                <div class="mb-6">
+                    <h4 class="text-lg font-semibold mb-4">性能指标</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="h-64">
+                            <canvas id="modal-cpu-chart"></canvas>
+                        </div>
+                        <div class="h-64">
+                            <canvas id="modal-memory-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <div>
+                    <h4 class="text-lg font-semibold mb-4">虚拟机列表</h4>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-dark-200">
+                            <thead>
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-dark-500 uppercase tracking-wider">名称</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-dark-500 uppercase tracking-wider">状态</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-dark-500 uppercase tracking-wider">操作系统</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-dark-500 uppercase tracking-wider">CPU</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-dark-500 uppercase tracking-wider">内存</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-dark-200" id="modal-vm-list">
+                                <!-- 虚拟机列表项将由JavaScript动态生成 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 添加主机模态框 -->
+    <div id="add-host-modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center fade-in">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-2xl max-h-[90vh] overflow-auto">
+            <div class="p-6 border-b border-dark-200">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-xl font-bold">添加ESXi主机</h3>
+                    <button id="close-add-host-modal" class="text-dark-500 hover:text-dark-700 transition-all-300">
+                        <i class="fa fa-times text-xl"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="p-6">
+                <form id="add-host-form">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <div>
+                            <label class="block text-sm font-medium text-dark-700 mb-2">主机名称</label>
+                            <input type="text" id="host-name" name="name" class="w-full px-4 py-2 border border-dark-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300" placeholder="输入主机名称" required>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-dark-700 mb-2">IP地址</label>
+                            <input type="text" id="host-ip" name="ip_address" class="w-full px-4 py-2 border border-dark-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300" placeholder="输入IP地址" required>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-dark-700 mb-2">用户名</label>
+                            <input type="text" id="host-username" name="username" class="w-full px-4 py-2 border border-dark-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300" placeholder="输入用户名" required>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-dark-700 mb-2">密码</label>
+                            <input type="password" id="host-password" name="password" class="w-full px-4 py-2 border border-dark-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300" placeholder="输入密码" required>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-dark-700 mb-2">端口</label>
+                            <input type="number" id="host-port" name="port" class="w-full px-4 py-2 border border-dark-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300" value="443" min="1" max="65535" required>
+                        </div>
+                    </div>
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium text-dark-700 mb-2">描述</label>
+                        <textarea id="host-description" name="description" rows="3" class="w-full px-4 py-2 border border-dark-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300" placeholder="输入主机描述"></textarea>
+                    </div>
+                    <div class="flex justify-end space-x-4">
+                        <button type="button" id="cancel-add-host" class="px-4 py-2 border border-dark-300 rounded-lg text-dark-700 hover:bg-dark-50 transition-all-300">
+                            取消
+                        </button>
+                        <button type="submit" class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-all-300">
+                            保存
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 删除确认模态框 -->
+    <div id="delete-confirm-modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center fade-in">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-md">
+            <div class="p-6 border-b border-dark-200">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-xl font-bold">确认删除</h3>
+                    <button id="close-delete-modal" class="text-dark-500 hover:text-dark-700 transition-all-300">
+                        <i class="fa fa-times text-xl"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="p-6">
+                <p class="text-dark-700 mb-6">确定要删除主机 <span id="delete-host-name" class="font-medium text-error"></span> 吗？此操作无法撤销。</p>
+                <input type="hidden" id="delete-host-id">
+                <div class="flex justify-end space-x-4">
+                    <button id="cancel-delete" class="px-4 py-2 border border-dark-300 rounded-lg text-dark-700 hover:bg-dark-50 transition-all-300">
+                        取消
+                    </button>
+                    <button id="confirm-delete" class="px-4 py-2 bg-error text-white rounded-lg hover:bg-error/90 transition-all-300">
+                        删除
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 消息提示框 -->
+    <div id="message-toast" class="fixed top-6 right-6 z-50 bg-white rounded-lg shadow-lg p-4 max-w-sm hidden">
+        <div class="flex items-start">
+            <div id="message-icon" class="w-8 h-8 rounded-full flex items-center justify-center mr-3"></div>
+            <div>
+                <h4 id="message-title" class="font-medium text-dark-900 mb-1"></h4>
+                <p id="message-content" class="text-sm text-dark-600"></p>
+            </div>
+            <button id="close-message" class="ml-auto text-dark-400 hover:text-dark-600">
+                <i class="fa fa-times"></i>
+            </button>
+        </div>
+    </div>
+    
+    <!-- 脚本部分 -->
+    <script>
+        // 侧边栏切换功能
+        document.getElementById('toggle-sidebar').addEventListener('click', function() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('w-64');
+            sidebar.classList.toggle('w-20');
+            
+            // 隐藏或显示文本
+            const sidebarTexts = sidebar.querySelectorAll('span');
+            sidebarTexts.forEach(text => {
+                text.classList.toggle('hidden');
+            });
+            
+            // 隐藏或显示次级信息
+            const sidebarSecondaryInfo = sidebar.querySelectorAll('p.text-dark-400');
+            sidebarSecondaryInfo.forEach(info => {
+                info.classList.toggle('hidden');
+            });
+        });
+        
+        // 模态框功能
+        const hostModal = document.getElementById('host-modal');
+        const closeModal = document.getElementById('close-modal');
+        
+        // 打开主机详情
+        document.querySelectorAll('button.view-host').forEach(button => {
+            button.addEventListener('click', function() {
+                const row = this.closest('tr');
+                const hostName = row.querySelector('.font-medium').textContent;
+                const hostIp = row.querySelector('.text-sm.text-dark-500').textContent;
+                const hostId = this.getAttribute('data-id');
+                
+                document.getElementById('modal-host-name').textContent = hostName;
+                document.getElementById('modal-host-ip').textContent = hostIp;
+                
+                // 实际应用中应从API获取数据
+                loadHostDetailData(hostName);
+                
+                hostModal.classList.remove('hidden');
+                document.body.style.overflow = 'hidden';
+            });
+        });
+        
+        // 关闭模态框
+        closeModal.addEventListener('click', function() {
+            hostModal.classList.add('hidden');
+            document.body.style.overflow = 'auto';
+        });
+        
+        // 点击模态框外部关闭
+        hostModal.addEventListener('click', function(event) {
+            if (event.target === hostModal) {
+                hostModal.classList.add('hidden');
+                document.body.style.overflow = 'auto';
+            }
+        });
+        
+        // 添加主机相关功能
+        const addHostModal = document.getElementById('add-host-modal');
+        const addHostBtn = document.getElementById('add-host-btn');
+        const closeAddHostModal = document.getElementById('close-add-host-modal');
+        const cancelAddHost = document.getElementById('cancel-add-host');
+        const addHostForm = document.getElementById('add-host-form');
+        
+        // 打开添加主机模态框
+        addHostBtn.addEventListener('click', function() {
+            addHostForm.reset();
+            addHostModal.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        });
+        
+        // 关闭添加主机模态框
+        function closeAddHostModalFunc() {
+            addHostModal.classList.add('hidden');
+            document.body.style.overflow = 'auto';
+        }
+        
+        closeAddHostModal.addEventListener('click', closeAddHostModalFunc);
+        cancelAddHost.addEventListener('click', closeAddHostModalFunc);
+        
+        // 点击模态框外部关闭
+        addHostModal.addEventListener('click', function(event) {
+            if (event.target === addHostModal) {
+                closeAddHostModalFunc();
+            }
+        });
+        
+        // 提交添加主机表单
+        addHostForm.addEventListener('submit', async function(event) {
+            event.preventDefault();
+            
+            // 获取表单数据
+            const formData = {
+                name: document.getElementById('host-name').value,
+                ip_address: document.getElementById('host-ip').value,
+                username: document.getElementById('host-username').value,
+                password: document.getElementById('host-password').value,
+                port: parseInt(document.getElementById('host-port').value),
+                description: document.getElementById('host-description').value
+            };
+            
+            try {
+                // 显示加载状态
+                const submitBtn = this.querySelector('button[type="submit"]');
+                const originalText = submitBtn.textContent;
+                submitBtn.disabled = true;
+                submitBtn.textContent = '保存中...';
+                
+                // 调用API添加主机
+                const response = await fetch('/api/hosts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || '添加主机失败');
+                }
+                
+                // 成功处理
+                showMessage('success', '添加成功', '主机已成功添加到系统中');
+                closeAddHostModalFunc();
+                
+                // 刷新主机列表
+                setTimeout(fetchHostList, 1000);
+                
+            } catch (error) {
+                showMessage('error', '添加失败', error.message);
+            } finally {
+                // 恢复按钮状态
+                const submitBtn = this.querySelector('button[type="submit"]');
+                submitBtn.disabled = false;
+                submitBtn.textContent = '保存';
+            }
+        });
+        
+        // 删除主机相关功能
+        const deleteConfirmModal = document.getElementById('delete-confirm-modal');
+        const closeDeleteModal = document.getElementById('close-delete-modal');
+        const cancelDelete = document.getElementById('cancel-delete');
+        const confirmDelete = document.getElementById('confirm-delete');
+        const deleteHostName = document.getElementById('delete-host-name');
+        const deleteHostId = document.getElementById('delete-host-id');
+        
+        // 打开删除确认模态框
+        document.querySelectorAll('button.delete-host').forEach(button => {
+            button.addEventListener('click', function() {
+                const hostId = this.getAttribute('data-id');
+                const hostName = this.getAttribute('data-name');
+                
+                deleteHostId.value = hostId;
+                deleteHostName.textContent = hostName;
+                deleteConfirmModal.classList.remove('hidden');
+                document.body.style.overflow = 'hidden';
+            });
+        });
+        
+        // 关闭删除确认模态框
+        function closeDeleteModalFunc() {
+            deleteConfirmModal.classList.add('hidden');
+            document.body.style.overflow = 'auto';
+        }
+        
+        closeDeleteModal.addEventListener('click', closeDeleteModalFunc);
+        cancelDelete.addEventListener('click', closeDeleteModalFunc);
+        
+        // 点击模态框外部关闭
+        deleteConfirmModal.addEventListener('click', function(event) {
+            if (event.target === deleteConfirmModal) {
+                closeDeleteModalFunc();
+            }
+        });
+        
+        // 确认删除主机
+        confirmDelete.addEventListener('click', async function() {
+            const hostId = deleteHostId.value;
+            
+            try {
+                // 显示加载状态
+                this.disabled = true;
+                this.textContent = '删除中...';
+                
+                // 调用API删除主机
+                const response = await fetch(`/api/hosts/${hostId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || '删除主机失败');
+                }
+                
+                // 成功处理
+                showMessage('success', '删除成功', '主机已成功从系统中删除');
+                closeDeleteModalFunc();
+                
+                // 从DOM中移除该行
+                const row = document.querySelector(`button.delete-host[data-id="${hostId}"]`).closest('tr');
+                if (row) {
+                    row.style.transition = 'opacity 0.3s, transform 0.3s';
+                    row.style.opacity = '0';
+                    row.style.transform = 'translateX(20px)';
+                    setTimeout(() => {
+                        row.remove();
+                    }, 300);
+                }
+                
+            } catch (error) {
+                showMessage('error', '删除失败', error.message);
+            } finally {
+                // 恢复按钮状态
+                this.disabled = false;
+                this.textContent = '删除';
+            }
+        });
+        
+        // 消息提示功能
+        const messageToast = document.getElementById('message-toast');
+        const messageIcon = document.getElementById('message-icon');
+        const messageTitle = document.getElementById('message-title');
+        const messageContent = document.getElementById('message-content');
+        const closeMessage = document.getElementById('close-message');
+        
+        function showMessage(type, title, content) {
+            // 设置消息类型样式
+            if (type === 'success') {
+                messageIcon.className = 'w-8 h-8 rounded-full bg-success/10 text-success flex items-center justify-center mr-3';
+                messageIcon.innerHTML = '<i class="fa fa-check"></i>';
+                messageTitle.className = 'font-medium text-success mb-1';
+            } else if (type === 'error') {
+                messageIcon.className = 'w-8 h-8 rounded-full bg-error/10 text-error flex items-center justify-center mr-3';
+                messageIcon.innerHTML = '<i class="fa fa-times"></i>';
+                messageTitle.className = 'font-medium text-error mb-1';
+            } else if (type === 'warning') {
+                messageIcon.className = 'w-8 h-8 rounded-full bg-warning/10 text-warning flex items-center justify-center mr-3';
+                messageIcon.innerHTML = '<i class="fa fa-exclamation-triangle"></i>';
+                messageTitle.className = 'font-medium text-warning mb-1';
+            }
+            
+            // 设置消息内容
+            messageTitle.textContent = title;
+            messageContent.textContent = content;
+            
+            // 显示消息
+            messageToast.classList.remove('hidden');
+            
+            // 自动关闭
+            const timeout = setTimeout(() => {
+                hideMessage();
+            }, 5000);
+            
+            // 点击关闭
+            closeMessage.onclick = function() {
+                clearTimeout(timeout);
+                hideMessage();
+            };
+        }
+        
+        function hideMessage() {
+            messageToast.classList.add('hidden');
+        }
+        
+        // 获取主机列表API
+        async function fetchHostList() {
+            try {
+                const response = await fetch('/api/hosts');
+                if (!response.ok) {
+                    throw new Error('获取主机列表失败');
+                }
+                
+                const hosts = await response.json();
+                const hostTableBody = document.querySelector('#host-table tbody');
+                
+                // 清空表格内容
+                hostTableBody.innerHTML = '';
+                
+                // 动态添加主机行
+                hosts.forEach(host => {
+                    const statusClass = host.status === 'connected' ? 'bg-success/10 text-success' : 
+                                      (host.status === 'disconnected' ? 'bg-warning/10 text-warning' : 
+                                      'bg-error/10 text-error');
+                    const statusText = host.status === 'connected' ? '已连接' : 
+                                      (host.status === 'disconnected' ? '未连接' : '错误');
+                    
+                    const row = document.createElement('tr');
+                    row.className = 'hover:bg-dark-50 transition-all-300';
+                    row.innerHTML = `
+                        <td>
+                            <div class="flex items-center">
+                                <i class="fa fa-server text-dark-500 mr-3"></i>
+                                <div>
+                                    <p class="font-medium text-dark-800">${host.name}</p>
+                                    <p class="text-sm text-dark-500">${host.ip_address}</p>
+                                </div>
+                            </div>
+                        </td>
+                        <td>
+                            <span class="px-3 py-1 rounded-full text-xs ${statusClass}">${statusText}</span>
+                        </td>
+                        <td>
+                            <div class="flex items-center">
+                                <div class="w-24 bg-dark-100 rounded-full h-2.5">
+                                    <div class="bg-primary rounded-full h-2.5" style="width: ${host.cpu_usage || 0}%">
+                                    </div>
+                                </div>
+                                <span class="ml-2 text-sm text-dark-700">${host.cpu_usage || 0}%</span>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="flex items-center">
+                                <div class="w-24 bg-dark-100 rounded-full h-2.5">
+                                    <div class="bg-warning rounded-full h-2.5" style="width: ${host.memory_usage || 0}%">
+                                    </div>
+                                </div>
+                                <span class="ml-2 text-sm text-dark-700">${host.memory_usage || 0}%</span>
+                            </div>
+                        </td>
+                        <td class="text-dark-700">${host.vm_count || 0}</td>
+                        <td>
+                            <div class="flex space-x-2">
+                                <button class="text-primary hover:text-primary/80 transition-all-300" title="查看详情">
+                                    <i class="fa fa-eye"></i>
+                                </button>
+                                <button class="text-dark-500 hover:text-dark-700 transition-all-300" title="设置">
+                                    <i class="fa fa-cog"></i>
+                                </button>
+                                <button class="text-error hover:text-error/80 transition-all-300 delete-host" 
+                                        data-id="${host.id}" data-name="${host.name}" title="删除">
+                                    <i class="fa fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    `;
+                    
+                    hostTableBody.appendChild(row);
+                });
+                
+                // 重新绑定删除事件
+                document.querySelectorAll('button.delete-host').forEach(button => {
+                    button.addEventListener('click', function() {
+                        const hostId = this.getAttribute('data-id');
+                        const hostName = this.getAttribute('data-name');
+                        deleteHostId.value = hostId;
+                        deleteHostName.textContent = hostName;
+                        deleteConfirmModal.classList.remove('hidden');
+                        document.body.style.overflow = 'hidden';
+                    });
+                });
+                
+                console.log('主机列表更新成功:', hosts);
+            } catch (error) {
+                console.error('获取主机列表错误:', error);
+                showMessage('error', '更新失败', '获取主机列表失败，请稍后重试');
+            }
+        }
+        
+        // 加载主机详情数据
+        function loadHostDetailData(hostName) {
+            // 这里模拟数据加载，实际应用中应从API获取
+            document.getElementById('modal-host-status').textContent = '已连接';
+            document.getElementById('modal-host-version').textContent = '7.0 Update 3';
+            document.getElementById('modal-host-cpu').textContent = '16';
+            document.getElementById('modal-host-memory').textContent = '64 GB';
+            document.getElementById('modal-host-storage').textContent = '4 TB';
+            document.getElementById('modal-host-vm-count').textContent = '6';
+            
+            // 虚拟机列表
+            const vmList = [
+                { name: 'web-server-01', status: 'poweredOn', guestOs: 'Ubuntu 20.04', cpu: 2, memory: '4 GB' },
+                { name: 'db-server-01', status: 'poweredOn', guestOs: 'CentOS 8', cpu: 4, memory: '8 GB' },
+                { name: 'app-server-01', status: 'poweredOn', guestOs: 'Windows Server 2019', cpu: 8, memory: '16 GB' },
+                { name: 'test-vm-01', status: 'poweredOff', guestOs: 'Debian 10', cpu: 1, memory: '2 GB' },
+                { name: 'monitoring-01', status: 'poweredOn', guestOs: 'Ubuntu 20.04', cpu: 2, memory: '4 GB' },
+                { name: 'backup-server', status: 'poweredOff', guestOs: 'Windows Server 2016', cpu: 4, memory: '8 GB' }
+            ];
+            
+            const vmListContainer = document.getElementById('modal-vm-list');
+            vmListContainer.innerHTML = '';
+            
+            vmList.forEach(vm => {
+                const statusClass = vm.status === 'poweredOn' ? 'bg-success/10 text-success' : 'bg-dark-200 text-dark-600';
+                const statusText = vm.status === 'poweredOn' ? '运行中' : '已关闭';
+                
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-dark-50 transition-all-300';
+                row.innerHTML = `
+                    <td class="px-4 py-4 whitespace-nowrap">
+                        <div class="font-medium">${vm.name}</div>
+                    </td>
+                    <td class="px-4 py-4 whitespace-nowrap">
+                        <span class="px-2 py-1 text-xs font-semibold rounded-full ${statusClass}">
+                            ${statusText}
+                        </span>
+                    </td>
+                    <td class="px-4 py-4 whitespace-nowrap">
+                        <div class="text-sm">${vm.guestOs}</div>
+                    </td>
+                    <td class="px-4 py-4 whitespace-nowrap">
+                        <div class="text-sm">${vm.cpu}</div>
+                    </td>
+                    <td class="px-4 py-4 whitespace-nowrap">
+                        <div class="text-sm">${vm.memory}</div>
+                    </td>
+                `;
+                vmListContainer.appendChild(row);
+            });
+            
+            // 初始化图表
+            initModalCharts();
+        }
+        
+        // 初始化仪表盘图表
+        function initDashboardCharts() {
+            // CPU 使用率图表
+            const cpuCtx = document.getElementById('cpuChart').getContext('2d');
+            const cpuChart = new Chart(cpuCtx, {
+                type: 'line',
+                data: {
+                    labels: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
+                    datasets: [
+                        {
+                            label: 'esxi-01',
+                            data: [45, 52, 49, 55, 48, 42, 45],
+                            borderColor: '#165DFF',
+                            backgroundColor: 'rgba(22, 93, 255, 0.1)',
+                            tension: 0.3,
+                            fill: true
+                        },
+                        {
+                            label: 'esxi-02',
+                            data: [78, 82, 85, 80, 83, 79, 85],
+                            borderColor: '#FAAD14',
+                            backgroundColor: 'rgba(250, 173, 20, 0.1)',
+                            tension: 0.3,
+                            fill: true
+                        },
+                        {
+                            label: 'esxi-03',
+                            data: [90, 92, 95, 91, 94, 92, 95],
+                            borderColor: '#F5222D',
+                            backgroundColor: 'rgba(245, 34, 45, 0.1)',
+                            tension: 0.3,
+                            fill: true
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            ticks: {
+                                callback: function(value) {
+                                    return value + '%';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            
+            // 内存使用率图表
+            const memoryCtx = document.getElementById('memoryChart').getContext('2d');
+            const memoryChart = new Chart(memoryCtx, {
+                type: 'line',
+                data: {
+                    labels: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
+                    datasets: [
+                        {
+                            label: 'esxi-01',
+                            data: [70, 72, 78, 75, 73, 71, 78],
+                            borderColor: '#165DFF',
+                            backgroundColor: 'rgba(22, 93, 255, 0.1)',
+                            tension: 0.3,
+                            fill: true
+                        },
+                        {
+                            label: 'esxi-02',
+                            data: [75, 78, 80, 82, 85, 83, 82],
+                            borderColor: '#FAAD14',
+                            backgroundColor: 'rgba(250, 173, 20, 0.1)',
+                            tension: 0.3,
+                            fill: true
+                        },
+                        {
+                            label: 'esxi-03',
+                            data: [88, 90, 92, 89, 91, 88, 92],
+                            borderColor: '#F5222D',
+                            backgroundColor: 'rgba(245, 34, 45, 0.1)',
+                            tension: 0.3,
+                            fill: true
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            ticks: {
+                                callback: function(value) {
+                                    return value + '%';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // 初始化模态框图表
+        function initModalCharts() {
+            // CPU 使用率图表
+            const cpuCtx = document.getElementById('modal-cpu-chart').getContext('2d');
+            const cpuChart = new Chart(cpuCtx, {
+                type: 'line',
+                data: {
+                    labels: Array.from({length: 24}, (_, i) => i + ':00'),
+                    datasets: [{
+                        label: 'CPU使用率',
+                        data: Array.from({length: 24}, () => Math.floor(Math.random() * 40) + 35),
+                        borderColor: '#165DFF',
+                        backgroundColor: 'rgba(22, 93, 255, 0.1)',
+                        tension: 0.3,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            ticks: {
+                                callback: function(value) {
+                                    return value + '%';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            
+            // 内存使用率图表
+            const memoryCtx = document.getElementById('modal-memory-chart').getContext('2d');
+            const memoryChart = new Chart(memoryCtx, {
+                type: 'line',
+                data: {
+                    labels: Array.from({length: 24}, (_, i) => i + ':00'),
+                    datasets: [{
+                        label: '内存使用率',
+                        data: Array.from({length: 24}, () => Math.floor(Math.random() * 30) + 65),
+                        borderColor: '#FAAD14',
+                        backgroundColor: 'rgba(250, 173, 20, 0.1)',
+                        tension: 0.3,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            ticks: {
+                                callback: function(value) {
+                                    return value + '%';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // 页面加载完成后初始化图表
+        document.addEventListener('DOMContentLoaded', function() {
+            // 检查Chart是否已加载并初始化图表
+            const initCharts = function() {
+                if (typeof Chart !== 'undefined') {
+                    try {
+                        initDashboardCharts();
+                        console.log('图表初始化成功');
+                    } catch (error) {
+                        console.error('图表初始化失败:', error);
+                        // 如果初始化失败，使用备用渲染方法
+                        if (window.fallbackChartRender) {
+                            window.fallbackChartRender();
+                        }
+                    }
+                } else {
+                    // 如果Chart未加载，使用备用渲染方法
+                    console.warn('Chart.js 未加载，使用备用显示方式');
+                    if (window.fallbackChartRender) {
+                        window.fallbackChartRender();
+                    }
+                }
+            };
+            
+            // 立即尝试初始化图表
+            initCharts();
+            
+            // 页面加载时获取真实主机数据，替换硬编码的主机列表
+            setTimeout(fetchHostList, 500);
+        });
+        
+        // 模拟数据更新
+        setInterval(function() {
+            // 更新主机状态卡片的进度条
+            document.querySelectorAll('.progress-bar').forEach(bar => {
+                const currentWidth = parseInt(bar.style.width);
+                const newWidth = Math.max(0, Math.min(100, currentWidth + (Math.random() * 10 - 5)));
+                bar.style.width = newWidth + '%';
+                
+                // 更新百分比文本
+                const percentText = bar.nextElementSibling;
+                if (percentText) {
+                    percentText.textContent = Math.round(newWidth) + '%';
+                }
+            });
+        }, 3000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+version: '3.8'
+
+# 定义网络
+networks:
+  esxi-monitoring-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# 定义服务
+services:
+  # MySQL数据库服务
+  db:
+    image: mysql:8.0
+    container_name: esxi-monitoring-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=esxi_monitoring
+      - MYSQL_USER=admin
+      - MYSQL_PASSWORD=password
+      - TZ=Asia/Shanghai
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "3306:3306"
+    networks:
+      - esxi-monitoring-network
+    command: --default-authentication-plugin=mysql_native_password --innodb_buffer_pool_size=512M
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # InfluxDB时序数据库服务
+  influxdb:
+    image: influxdb:2.6-alpine
+    container_name: esxi-monitoring-influxdb
+    restart: unless-stopped
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=influxdb_password
+      - DOCKER_INFLUXDB_INIT_ORG=esxi-monitoring
+      - DOCKER_INFLUXDB_INIT_BUCKET=esxi_metrics
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=esxi-monitoring-token
+      - INFLUXD_HTTP_BIND_ADDRESS=:8086
+      - TZ=Asia/Shanghai
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    ports:
+      - "8086:8086"
+    networks:
+      - esxi-monitoring-network
+
+  # Redis缓存服务
+  redis:
+    image: redis:7.0-alpine
+    container_name: esxi-monitoring-redis
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - redis-data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    ports:
+      - "6379:6379"
+    networks:
+      - esxi-monitoring-network
+    command: redis-server /usr/local/etc/redis/redis.conf
+
+  # 主应用服务
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: esxi-monitoring-system
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - app-data:/app/data
+      - app-logs:/app/logs
+      - app-locks:/app/locks
+      - .env:/app/.env:ro
+    ports:
+      - "8080:8000"
+    networks:
+      - esxi-monitoring-network
+    environment:
+      - ENVIRONMENT=production
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - DATABASE_URL=mysql+pymysql://admin:password@db:3306/esxi_monitoring
+      - INFLUXDB_ENABLED=true
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=esxi-monitoring-token
+      - INFLUXDB_ORG=esxi-monitoring
+      - INFLUXDB_BUCKET=esxi_metrics
+      - REDIS_ENABLED=true
+      - REDIS_URL=redis://redis:6379/0
+      - CONTAINERIZED=true
+      - LOCK_DIR=/app/locks
+      - DATA_DIR=/app/data
+      - ESXI_HOSTS=esxi1:192.168.1.10:root:password
+    healthcheck:
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+# 定义数据卷
+volumes:
+  mysql-data:
+    driver: local
+    # 可以配置数据卷备份策略
+  influxdb-data:
+    driver: local
+  redis-data:
+    driver: local
+  app-data:
+    driver: local
+  app-logs:
+    driver: local
+  app-locks:
+    driver: local
